@@ -2,7 +2,7 @@
 
 ![python](https://img.shields.io/badge/python-3.8+-3776AB)
 ![license](https://img.shields.io/badge/license-Apache%202.0-blue)
-![status](https://img.shields.io/badge/status-beta-orange)
+![status](https://img.shields.io/badge/status-dev-orange)
 ![tests](https://img.shields.io/badge/tests-pytest-0A9EDC)
 
 **给大模型应用的长时记忆层**：把对话与文本抽取为结构化记忆，写入向量库与关系库，再按语义加关键词双路召回并融合排序。
