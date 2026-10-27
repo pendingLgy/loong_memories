@@ -79,7 +79,7 @@ class SQLiteDB(DBEngine):
             echo=self.print_sql,
             connect_args={
                 "check_same_thread": False,
-                "timeout": 30.0  # 增加锁等待超时时间（秒）
+                "timeout": 5.0  # 增加锁等待超时时间（秒）
             },
             pool_size=self.pool_size,
             max_overflow=self.max_overflow,
@@ -163,7 +163,7 @@ class AsyncSQLiteDB(AsyncDBEngine):
                 echo=self.print_sql,
                 connect_args={
                     "check_same_thread": False,
-                    "timeout": 30.0  # 增加锁等待超时时间（秒）
+                    "timeout": 5.0  # 增加锁等待超时时间（秒）
                 },
                 pool_size=self.pool_size,
                 max_overflow=self.max_overflow,
