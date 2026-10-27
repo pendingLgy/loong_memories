@@ -113,7 +113,7 @@ CONFIG_DB = {
         'database': 'autotest_rag_data',
         'connection_string': '',
         # ---------------- PostgreSQL 可选连接参数 ----------------
-        'sslmode': 'prefer',
+        'sslmode': 'disable',
         'connect_timeout': 5,
         'application_name': 'loong_memories_service',
         'options': '',

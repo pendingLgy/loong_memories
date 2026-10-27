@@ -231,6 +231,8 @@ class TestPGDBIntegration:
             pool_recycle=pool.pool_recycle,
             pool_pre_ping=pool.pool_pre_ping,
             table_prefix=db_settings.table_prefix,
+            sslmode=pg.sslmode,
+            connect_timeout=pg.connect_timeout,
         )
         try:
             db._start()
@@ -399,6 +401,8 @@ class TestAsyncPGDBIntegration:
             pool_recycle=pool.pool_recycle,
             pool_pre_ping=pool.pool_pre_ping,
             table_prefix=prefix,
+            sslmode=pg.sslmode,
+            connect_timeout=pg.connect_timeout,
         )
         db.table_prefix = prefix
         db.METADATA = MetaData()

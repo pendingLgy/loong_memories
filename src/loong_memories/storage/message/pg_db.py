@@ -190,6 +190,11 @@ class AsyncPGDB(AsyncDBEngine):
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
                  table_prefix: str = "",
+                 sslmode: str = "prefer",
+                 connect_timeout: int = 5,
+                 application_name: str = "",
+                 options: str = "",
+                 target_session_attrs: str = "any",
                  ) -> None:
 
         self.connection_string = connection_string
@@ -205,6 +210,15 @@ class AsyncPGDB(AsyncDBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+
+        # 新增的 PG 高级/可选连接参数绑定
+        self.sslmode = sslmode
+        self.connect_timeout = connect_timeout
+        self.application_name = application_name
+        self.options = options
+        self.target_session_attrs = target_session_attrs
+
         super().__init__(table_prefix=table_prefix)
 
     async def _start(self) -> AsyncEngine:
@@ -234,10 +248,15 @@ class AsyncPGDB(AsyncDBEngine):
                 password=self.password,
                 host=self.host,
                 port=self.port,
-                database=self.database,
+                query={
+                    "application_name": self.application_name,
+                    **({"options": self.options} if self.options else {}),
+                    "target_session_attrs": self.target_session_attrs,
+                }
             )
             parse_connection_string = url.render_as_string(hide_password=False)
 
+        ssl_arg = True if self.sslmode in ("require", "verify-ca", "verify-full", "prefer") else False
         try:
             self.engine = create_async_engine(
                 parse_connection_string,
@@ -247,6 +266,10 @@ class AsyncPGDB(AsyncDBEngine):
                 pool_timeout=self.pool_timeout,
                 pool_recycle=self.pool_recycle,
                 pool_pre_ping=self.pool_pre_ping,
+                connect_args={
+                    "timeout": float(self.connect_timeout),  # asyncpg 要求 timeout 为数字（秒）
+                    "ssl": ssl_arg,
+                }
             )
             self.session_local = async_sessionmaker(
                 bind=self.engine,

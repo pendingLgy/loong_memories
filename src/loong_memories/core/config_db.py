@@ -11,6 +11,20 @@ class SQLiteSettings(BaseModel):
     # 库文件路径；留空表示未配置，实例化时会报错。
     path: str = Field(default="")
 
+    # ---------------- SQLite 可选连接/驱动参数 ----------------
+    timeout: float = Field(
+        default=30.0,
+        description="数据库写锁等待超时时间（秒），避免并发写入时立即抛出 database is locked"
+    )
+    isolation_level: str = Field(
+        default="",
+        description="事务隔离级别：DEFERRED, IMMEDIATE, EXCLUSIVE, AUTOCOMMIT，留空则使用驱动默认"
+    )
+    check_same_thread: bool = Field(
+        default=False,
+        description="是否强制检查同线程访问（在异步或多线程连接池场景下通常设为 False）"
+    )
+
 
 class MySQLSettings(BaseModel):
     """MySQL 连接参数。"""
