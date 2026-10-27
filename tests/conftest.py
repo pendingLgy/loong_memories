@@ -96,6 +96,10 @@ CONFIG_DB = {
     'table_prefix': 'lm_',
     'sqlite': {
         'path': 'F:\\workspace\\code\\python\\loong_memories\\test.db',
+        # ---------------- SQLite 可选参数 ----------------
+        'timeout': 30.0,
+        'isolation_level': '',
+        'check_same_thread': False,
     },
     'mysql': {
         'host': '127.0.0.1',

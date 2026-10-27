@@ -50,6 +50,9 @@ class SQLiteDB(DBEngine):
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
                  table_prefix: str = "",
+                 timeout: float = 30.0,
+                 isolation_level: str = "",
+                 check_same_thread: bool = False,
                  ) -> None:
         self.db_path = db_path
         self.print_sql = print_sql
@@ -60,6 +63,12 @@ class SQLiteDB(DBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+        # 绑定 SQLite 可选参数
+        self.timeout = timeout
+        self.isolation_level = isolation_level
+        self.check_same_thread = check_same_thread
+
         super().__init__(table_prefix=table_prefix)
 
     def _start(self) -> Engine:
@@ -73,24 +82,28 @@ class SQLiteDB(DBEngine):
         url = URL.create("sqlite", database=self.db_path)
         self.connection_string = url.render_as_string(hide_password=False)
 
-        # 关闭线程检查：解析与记忆流程可能在不同线程复用同一个库文件。
-        self.engine = create_engine(
-            url,
-            echo=self.print_sql,
-            connect_args={
-                "check_same_thread": False,
-                "timeout": 5.0  # 增加锁等待超时时间（秒）
-            },
-            pool_size=self.pool_size,
-            max_overflow=self.max_overflow,
-            pool_timeout=self.pool_timeout,
-            pool_recycle=self.pool_recycle,
-            pool_pre_ping=self.pool_pre_ping,
-        )
+        try:
+            self.engine = create_engine(
+                url,
+                echo=self.print_sql,
+                pool_size=self.pool_size,
+                max_overflow=self.max_overflow,
+                pool_timeout=self.pool_timeout,
+                pool_recycle=self.pool_recycle,
+                pool_pre_ping=self.pool_pre_ping,
+                # 如果配置了 isolation_level，也可以动态传进去
+                **({"isolation_level": self.isolation_level} if self.isolation_level else {}),
+                connect_args={
+                    "check_same_thread": self.check_same_thread,
+                    "timeout": self.timeout,  # 使用实例属性，支持从配置动态传入
+                },
+            )
 
-        self.SessionLocal = sessionmaker(bind=self.engine)
+            self.SessionLocal = sessionmaker(bind=self.engine)
 
-        self._init_db(self.engine, self.SessionLocal)
+            self._init_db(self.engine, self.SessionLocal)
+        except Exception as exc:
+            raise StorageError("无法创建同步 SQLite 引擎：" + str(exc)) from exc
 
         if self.print_sql:
             # 开启 SQLAlchemy engine 和 pool 的调试日志
@@ -131,6 +144,9 @@ class AsyncSQLiteDB(AsyncDBEngine):
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
                  table_prefix: str = "",
+                 timeout: float = 30.0,
+                 isolation_level: str = "",
+                 check_same_thread: bool = False,
                  ) -> None:
         self.db_path = db_path
         self.print_sql = print_sql
@@ -141,6 +157,12 @@ class AsyncSQLiteDB(AsyncDBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+        # 绑定 SQLite 可选参数
+        self.timeout = timeout
+        self.isolation_level = isolation_level
+        self.check_same_thread = check_same_thread
+
         super().__init__(table_prefix=table_prefix)
 
     async def _start(self) -> AsyncEngine:
@@ -161,15 +183,17 @@ class AsyncSQLiteDB(AsyncDBEngine):
             self.engine = create_async_engine(
                 url,
                 echo=self.print_sql,
-                connect_args={
-                    "check_same_thread": False,
-                    "timeout": 5.0  # 增加锁等待超时时间（秒）
-                },
                 pool_size=self.pool_size,
                 max_overflow=self.max_overflow,
                 pool_timeout=self.pool_timeout,
                 pool_recycle=self.pool_recycle,
                 pool_pre_ping=self.pool_pre_ping,
+                # 只有当 isolation_level 非空时才传入
+                **({"isolation_level": self.isolation_level} if self.isolation_level else {}),
+                connect_args={
+                    "timeout": self.timeout,
+                    "check_same_thread": self.check_same_thread,
+                }
             )
 
             self.session_local = async_sessionmaker(
