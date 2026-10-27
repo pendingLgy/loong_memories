@@ -38,6 +38,28 @@ class PGSettings(BaseModel):
     # 完整连接串；留空则由上面的离散字段拼装。
     connection_string: str = Field(default="")
 
+    # ---------------- 扩展的高级/可选连接参数 ----------------
+
+    sslmode: str = Field(
+        default="prefer",
+        description="SSL 加密模式：disable, allow, prefer, require, verify-ca, verify-full"
+    )
+    connect_timeout: int = Field(
+        default=5,
+        description="建立连接的最大等待时间（秒）"
+    )
+    application_name: str = Field(
+        default="",
+        description="客户端应用名称（便于在数据库端监控查询来源）"
+    )
+    options: str = Field(
+        default="",
+        description="会话启动参数，例如传递时区或编码：-c timezone=UTC"
+    )
+    target_session_attrs: str = Field(
+        default="any",
+        description="高可用/集群路由目标：any（任意）, read-write（仅连接可写主库）"
+    )
 
 class DBPoolSettings(BaseModel):
     """数据库连接池"""

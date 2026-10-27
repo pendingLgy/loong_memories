@@ -107,18 +107,25 @@ CONFIG_DB = {
     },
     'pg': {
         'host': '127.0.0.1',
-        'port': 5433,
-        'user': 'svc',
-        'password': 'rot',
+        'port': 5432,
+        'user': 'root',
+        'password': '123456',
         'database': 'autotest_rag_data',
         'connection_string': '',
+        # ---------------- PostgreSQL 可选连接参数 ----------------
+        'sslmode': 'prefer',
+        'connect_timeout': 5,
+        'application_name': 'loong_memories_service',
+        'options': '',
+        'target_session_attrs': 'any',
+
     },
     'pool_config': {
         'print_sql': False,
         'pool_size': 5,
         'max_overflow': 10,
         'pool_timeout': 5,
-        'pool_recycle': 10,
+        'pool_recycle': 1800,
         'pool_pre_ping': True,
     },
 }

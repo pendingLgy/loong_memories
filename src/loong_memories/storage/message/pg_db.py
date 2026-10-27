@@ -65,6 +65,11 @@ class PGDB(DBEngine):
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
                  table_prefix: str = "",
+                 sslmode: str = "prefer",
+                 connect_timeout: int = 5,
+                 application_name: str = "",
+                 options: str = "",
+                 target_session_attrs: str = "any",
                  ) -> None:
 
         self.connection_string = connection_string
@@ -80,6 +85,13 @@ class PGDB(DBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+        # 新增的 PG 高级/可选连接参数绑定
+        self.sslmode = sslmode
+        self.connect_timeout = connect_timeout
+        self.application_name = application_name
+        self.options = options
+        self.target_session_attrs = target_session_attrs
         super().__init__(table_prefix=table_prefix)
 
     def _start(self) -> Engine:
@@ -105,6 +117,13 @@ class PGDB(DBEngine):
                 host=self.host,
                 port=self.port,
                 database=self.database,
+                query={
+                    "sslmode": self.sslmode,
+                    "connect_timeout": str(self.connect_timeout),
+                    "application_name": self.application_name,
+                    **({"options": self.options} if self.options else {}),
+                    "target_session_attrs": self.target_session_attrs,
+                }
             )
             parse_connection_string = url.render_as_string(hide_password=False)
 

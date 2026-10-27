@@ -8,7 +8,7 @@ from contextlib import contextmanager, asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Iterator
 
-from sqlalchemy import delete, insert, select, MetaData
+from sqlalchemy import delete, insert, select, MetaData, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -38,6 +38,17 @@ class DBEngine(BaseDB):
     def _init_db(self, engine, sessionLocal):
         self.engine = engine
         self.SessionLocal = sessionLocal
+
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("SELECT 1"))
+                row = result.fetchone()
+                logger.info("SELECT 1")
+                assert row[0] == 1
+        except Exception as exc:
+            logger.error(f"同步数据库连接失败: {exc}")
+            raise
+
         self._ensure_schema()
 
     @contextmanager
@@ -221,6 +232,17 @@ class AsyncDBEngine(DBEngine):
     async def _init_db(self, engine, asyncSessionLocal):
         self.engine = engine
         self.AsyncSessionLocal = asyncSessionLocal
+
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1"))
+                row = result.fetchone()
+                logger.info("SELECT 1")
+                assert row[0] == 1
+        except Exception as exc:
+            logger.error(f"异步数据库连接失败: {exc}")
+            raise
+
         await self._ensure_schema()
 
     @abstractmethod
