@@ -1,7 +1,25 @@
-# 雪花 ID 生成器：64 位整数，高位时间戳保证趋势递增，便于做主键与排序。
+# Copyright [2026] [longgyx]
 #
-# 结构：1 位符号（恒为 0）+ 41 位毫秒时间戳 + 5 位数据中心 + 5 位工作节点 + 12 位序列。
-# 同一毫秒内最多产生 4096 个 ID，超出则等待下一毫秒。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 雪花 ID 生成器：64 位整数，高位时间戳保证趋势递增，便于做主键与排序。
+
+ 结构：1 位符号（恒为 0）+ 41 位毫秒时间戳 + 5 位数据中心 + 5 位工作节点 + 12 位序列。
+ 同一毫秒内最多产生 4096 个 ID，超出则等待下一毫秒。
+"""
+
 
 from __future__ import annotations
 

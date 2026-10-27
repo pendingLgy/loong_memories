@@ -1,6 +1,24 @@
-# 作用域构造与校验：全部为纯函数，不做任何外部调用。
+# Copyright [2026] [longgyx]
 #
-# 约定：user_id、agent_id、run_id 是唯一的身份来源，metadata 中的同名字段一律剥离。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 作用域构造与校验：全部为纯函数，不做任何外部调用。
+
+ 约定：user_id、agent_id、run_id 是唯一的身份来源，metadata 中的同名字段一律剥离。
+"""
+
 
 from __future__ import annotations
 

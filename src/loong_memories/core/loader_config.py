@@ -1,17 +1,37 @@
-# 配置装载：把 JSON 字符串、YAML 文件与环境变量合成一份 MemorySettings。
+# Copyright [2026] [longgyx]
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-# 三类来源按优先级从低到高叠加，同名键做深度合并，最终交给 pydantic 校验：
-#   各 Settings 的字段默认值（最低）
-#   YAML 文件
-#   JSON 字符串
-#   环境变量（最高）
 
-# 环境变量以 LOONG_MEMORIES__ 为前缀，双下划线分隔层级，例如：
-#   LOONG_MEMORIES__DB__BACKEND 映射为 db.backend
-#   LOONG_MEMORIES__DB__POOL_CONFIG__POOL_SIZE 映射为 db.pool_config.pool_size
 
-# 环境变量的值默认保持字符串，由 pydantic 完成类型转换（true、5、1.5 均可）；
-# 仅当值以 [ 或 { 开头时才按 JSON 解析，用于表达列表与嵌套对象。
+"""
+ 配置装载：把 JSON 字符串、YAML 文件与环境变量合成一份 MemorySettings。
+
+ 三类来源按优先级从低到高叠加，同名键做深度合并，最终交给 pydantic 校验：
+   各 Settings 的字段默认值（最低）
+   YAML 文件
+   JSON 字符串
+   环境变量（最高）
+
+ 环境变量以 LOONG_MEMORIES__ 为前缀，双下划线分隔层级，例如：
+   LOONG_MEMORIES__DB__BACKEND 映射为 db.backend
+   LOONG_MEMORIES__DB__POOL_CONFIG__POOL_SIZE 映射为 db.pool_config.pool_size
+
+ 环境变量的值默认保持字符串，由 pydantic 完成类型转换（true、5、1.5 均可）；
+ 仅当值以 [ 或 { 开头时才按 JSON 解析，用于表达列表与嵌套对象。
+
+"""
+
 
 from __future__ import annotations
 

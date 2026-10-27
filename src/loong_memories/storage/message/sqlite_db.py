@@ -1,6 +1,24 @@
-# SQLite 实现：同步走标准库 sqlite3，异步走 aiosqlite（需额外安装）。
+# Copyright [2026] [longgyx]
 #
-# 数据一律落盘：库文件路径必须由构造参数显式指定，不提供内存库模式。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ SQLite 实现：同步走标准库 sqlite3，异步走 aiosqlite（需额外安装）。
+
+ 数据一律落盘：库文件路径必须由构造参数显式指定，不提供内存库模式。
+"""
+
 
 from __future__ import annotations
 

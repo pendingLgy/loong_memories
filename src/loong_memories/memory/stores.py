@@ -1,6 +1,24 @@
-# 存储薄封装：统一 id 转换、payload 布局与批量回退策略。
+# Copyright [2026] [longgyx]
 #
-# 记忆层不直接接触方言实现，只依赖 DBEngine 与 VectorEngine 的抽象方法。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 存储薄封装：统一 id 转换、payload 布局与批量回退策略。
+
+ 记忆层不直接接触方言实现，只依赖 DBEngine 与 VectorEngine 的抽象方法。
+"""
+
 
 from __future__ import annotations
 

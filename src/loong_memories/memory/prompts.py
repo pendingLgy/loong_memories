@@ -1,6 +1,24 @@
-# 记忆层提示词：与 mem0 保持逐字一致，不做改写。
+# Copyright [2026] [longgyx]
 #
-# 来源：mem0 的 configs\prompts.py；常量与渲染函数原样移植，仅补充本项目的导入声明。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 记忆层提示词：与 mem0 保持逐字一致，不做改写。
+
+ 来源：mem0 的 configs\prompts.py；常量与渲染函数原样移植，仅补充本项目的导入声明。
+"""
+
 
 from __future__ import annotations
 

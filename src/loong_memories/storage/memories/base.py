@@ -1,10 +1,28 @@
-# 向量库抽象接口：屏蔽具体实现（Milvus、PG 等）。
+# Copyright [2026] [longgyx]
 #
-# 约定：search 返回的 score 越大越相似（建议范围 [0, 1]）。
-# 采用距离度量的实现需先转相似度：
-#   COSINE 距离：score = max(0.0, 1.0 - distance)
-#   L2 距离：score = 1.0 / (1.0 + distance)
-#   IP 内积：score 即内积值（越大越相似）
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 向量库抽象接口：屏蔽具体实现（Milvus、PG 等）。
+
+ 约定：search 返回的 score 越大越相似（建议范围 [0, 1]）。
+ 采用距离度量的实现需先转相似度：
+   COSINE 距离：score = max(0.0, 1.0 - distance)
+   L2 距离：score = 1.0 / (1.0 + distance)
+   IP 内积：score 即内积值（越大越相似）
+"""
+
 
 from __future__ import annotations
 

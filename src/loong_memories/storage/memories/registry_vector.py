@@ -1,7 +1,25 @@
-# 向量库后端注册表：支持注册自定义实现，只负责注册与解析，不做实例化。
+# Copyright [2026] [longgyx]
 #
-# 注册方式二选一：继承 VectorStoreBase 并声明 backend（自动注册），或调用 register_vector_store 显式登记。
-# 注册值可为类对象，也可为点分路径；实例化在 vector_engine 中进行，本模块不持有任何实例。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ 向量库后端注册表：支持注册自定义实现，只负责注册与解析，不做实例化。
+
+ 注册方式二选一：继承 VectorStoreBase 并声明 backend（自动注册），或调用 register_vector_store 显式登记。
+ 注册值可为类对象，也可为点分路径；实例化在 vector_engine 中进行，本模块不持有任何实例。
+"""
+
 
 from __future__ import annotations
 

@@ -8,17 +8,17 @@ dynamic = ["version"]
 description = 'llm long memory '
 readme = "README.md"
 requires-python = ">=3.8"
-license = "MIT"
+license = "Apache 2.0"
 keywords = []
 authors = [
-  { name = "loong", email = "longgyx@gmail.com" },
+  { name = "longgyx", email = "longgyx@gmail.com" },
 ]
 
 
 [project.urls]
-Documentation = "https://github.com/loong/loong-memories#readme"
-Issues = "https://github.com/loong/loong-memories/issues"
-Source = "https://github.com/loong/loong-memories"
+Documentation = "https://github.com/pendingLgy/loong_memories#readme"
+Issues = "https://github.com/pendingLgy/loong_memories/issues"
+Source = "https://github.com/pendingLgy/loong_memories"
 
 [tool.hatch.version]
 path = "src/loong_memories/__about__.py"

@@ -1,7 +1,26 @@
-# Milvus 向量库实现：集合、向量字段与 JSON 元数据，AUTOINDEX 建索引。
+# Copyright [2026] [longgyx]
 #
-# 单一 schema：id 主键、vectors 稠密向量、metadata 元数据，外加 text 文本与 sparse 稀疏向量；
-# 稀疏向量由 BM25 函数按 text 自动生成，稠密检索与关键词检索共用同一集合。
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""
+ Milvus 向量库实现：集合、向量字段与 JSON 元数据，AUTOINDEX 建索引。
+
+ 单一 schema：id 主键、vectors 稠密向量、metadata 元数据，外加 text 文本与 sparse 稀疏向量；
+ 稀疏向量由 BM25 函数按 text 自动生成，稠密检索与关键词检索共用同一集合。
+"""
+
+
 
 from __future__ import annotations
 
