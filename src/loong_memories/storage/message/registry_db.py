@@ -1,15 +1,8 @@
-# 数据库后端注册表：支持注册自定义实现，只负责注册与解析，不做实例化。
-#
-# 注册方式二选一：继承 BaseDB 并声明 backend（自动注册），或调用 register_db 显式登记。
-# 注册值可为类对象，也可为点分路径；实例化在 db_engine.build_database 中进行，本模块不持有任何实例。
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, List, Type
+from typing import Dict, List, Any
 
 from loong_memories.registry import Ref, Registry
-from loong_memories.storage.message.base import BaseDB
-
 
 # 内置后端名称到类路径的映射，按需惰性导入。
 BUILTIN_DBS: Dict[str, str] = {
@@ -44,6 +37,6 @@ def available_dbs() -> List[str]:
     return _REGISTRY.names()
 
 
-def resolve_db(name: str) -> Type[BaseDB]:
+def resolve_db(name: str) -> Any:
     "按后端名取得实现类，路径登记的在此惰性导入。"
     return _REGISTRY.resolve(name)

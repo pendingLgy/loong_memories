@@ -11,12 +11,10 @@ JSON 配置按 MemorySettings 的分区拆分：embedding、llm、db、vector �
 
 from __future__ import annotations
 
-import copy
 import json
 import pathlib
 import sys
 
-import pytest
 
 # src-layout 未安装时，把 src 加入导入路径，保证 loong_memories 可导入。
 _SRC_DIR = pathlib.Path(__file__).resolve().parents[1] / 'src'
@@ -97,22 +95,22 @@ CONFIG_DB = {
     'backend': 'sqlite',
     'table_prefix': 'lm_',
     'sqlite': {
-        'path': 'test.db',
+        'path': 'F:\\workspace\\code\\python\\loong_memories\\test.db',
     },
     'mysql': {
-        'host': 'db.example',
-        'port': 3307,
-        'user': 'svc',
-        'password': 'secret',
-        'database': 'mem',
+        'host': '127.0.0.1',
+        'port': 3306,
+        'user': 'root',
+        'password': '123456',
+        'database': 'autotest_rag_data',
         'charset': 'utf8mb4',
     },
     'pg': {
-        'host': 'db.example',
+        'host': '127.0.0.1',
         'port': 5433,
         'user': 'svc',
-        'password': 'secret',
-        'database': 'mem',
+        'password': 'rot',
+        'database': 'autotest_rag_data',
         'connection_string': '',
     },
     'pool_config': {
@@ -120,7 +118,7 @@ CONFIG_DB = {
         'pool_size': 5,
         'max_overflow': 10,
         'pool_timeout': 5,
-        'pool_recycle': 1800,
+        'pool_recycle': 10,
         'pool_pre_ping': True,
     },
 }
@@ -198,5 +196,5 @@ def _load_memory_settings():
     return MemorySettings.model_validate(CONFIG_JSON_DICT)
 
 
-# 顶层聚合配置；依赖 pydantic-settings，未安装时为 None，用例应通过 fixture 取用。
+# 顶层聚合配置；依赖 pydantic-settings，未安装时为 None，用例应直接引用该常量。
 CONFIG_MEMORY_SETTINGS = _load_memory_settings()

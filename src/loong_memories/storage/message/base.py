@@ -1,7 +1,3 @@
-# 关系型数据库抽象接口：历史记录与消息的持久化，屏蔽具体数据库。
-#
-# 参数与返回值统一使用 pydantic 对象，避免裸字典在层间传递。
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -9,7 +5,6 @@ from typing import ClassVar, List, Optional
 
 from sqlalchemy import Engine
 
-from loong_memories.storage.message.registry_db import register_db
 from loong_memories.storage.message.schema import HistoryRecord, Message
 
 
@@ -24,7 +19,8 @@ class BaseDB(ABC):
         super().__init_subclass__(**kwargs)
         name = cls.__dict__.get("backend")
         if isinstance(name, str) and name:
-            # 直接登记类对象，避免本地类因 qualname 无法按路径导入。
+            # 局部导入 register_db，彻底避免顶层循环导入
+            from loong_memories.storage.message.registry_db import register_db
             register_db(name, cls)
 
     @abstractmethod
