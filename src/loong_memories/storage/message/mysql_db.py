@@ -54,7 +54,10 @@ class MySQLDB(DBEngine):
                  pool_timeout: int = 30,
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
-                 table_prefix: str = ""
+                 table_prefix: str = "",
+                 connect_timeout: int = 10,
+                 autocommit: bool = False,
+                 sql_mode: str = "",
                  ) -> None:
 
         self.connection_string = connection_string
@@ -71,6 +74,12 @@ class MySQLDB(DBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+        # 绑定 MySQL 可选驱动参数
+        self.connect_timeout = connect_timeout
+        self.autocommit = autocommit
+        self.sql_mode = sql_mode
+
         super().__init__(table_prefix=table_prefix)
 
     def _start(self) -> Engine:
@@ -101,19 +110,32 @@ class MySQLDB(DBEngine):
 
             self.connection_string = url.render_as_string(hide_password=False)
 
-        self.engine = create_engine(
-            self.connection_string,
-            echo=self.print_sql,
-            pool_size=self.pool_size,
-            max_overflow=self.max_overflow,
-            pool_timeout=self.pool_timeout,
-            pool_recycle=self.pool_recycle,
-            pool_pre_ping=self.pool_pre_ping,
-        )
+        connect_args = {
+            "connect_timeout": self.connect_timeout,
+            "autocommit": self.autocommit,
+        }
 
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        # 如果设置了 sql_mode，通过 init_command 在建连时初始化
+        if self.sql_mode:
+            connect_args["init_command"] = f"SET sql_mode='{self.sql_mode}'"
 
-        self._init_db(self.engine, self.SessionLocal)
+        try:
+            self.engine = create_engine(
+                self.connection_string,
+                echo=self.print_sql,
+                pool_size=self.pool_size,
+                max_overflow=self.max_overflow,
+                pool_timeout=self.pool_timeout,
+                pool_recycle=self.pool_recycle,
+                pool_pre_ping=self.pool_pre_ping,
+                connect_args=connect_args,
+            )
+
+            self.SessionLocal = sessionmaker(bind=self.engine)
+
+            self._init_db(self.engine, self.SessionLocal)
+        except Exception as exc:
+            raise StorageError(f"无法创建同步 MySQL 引擎：{exc}") from exc
 
         if self.print_sql:
             # 开启 SQLAlchemy engine 和 pool 的调试日志
@@ -190,7 +212,10 @@ class AsyncMySQLDB(AsyncDBEngine):
                  pool_timeout: int = 30,
                  pool_recycle: int = 1800,
                  pool_pre_ping: bool = True,
-                 table_prefix: str = ""
+                 table_prefix: str = "",
+                 connect_timeout: int = 10,
+                 autocommit: bool = False,
+                 sql_mode: str = "",
                  ) -> None:
 
         self.connection_string = connection_string
@@ -207,6 +232,12 @@ class AsyncMySQLDB(AsyncDBEngine):
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
         self.table_prefix = table_prefix
+
+        # 绑定 MySQL 可选驱动参数
+        self.connect_timeout = connect_timeout
+        self.autocommit = autocommit
+        self.sql_mode = sql_mode
+
         super().__init__(table_prefix=table_prefix)
 
     async def _start(self) -> AsyncEngine:
@@ -237,6 +268,16 @@ class AsyncMySQLDB(AsyncDBEngine):
             # 渲染成字符串链接
             parse_connection_string = url.render_as_string(hide_password=False)
 
+        # 构造传给底层异步 MySQL 驱动的 connect_args
+        connect_args = {
+            "connect_timeout": self.connect_timeout,
+            "autocommit": self.autocommit,
+        }
+
+        # 如果设置了 sql_mode，通过 init_command 在异步建连时动态设置
+        if self.sql_mode:
+            connect_args["init_command"] = f"SET sql_mode='{self.sql_mode}'"
+
         # 初始化异步引擎与会话工厂
         try:
             self.engine: AsyncEngine = create_async_engine(
@@ -247,7 +288,9 @@ class AsyncMySQLDB(AsyncDBEngine):
                 pool_timeout=self.pool_timeout,
                 pool_recycle=self.pool_recycle,
                 pool_pre_ping=self.pool_pre_ping,
+                connect_args=connect_args,
             )
+
             self.AsyncSessionLocal = async_sessionmaker(
                 bind=self.engine,
                 class_=AsyncSession,

@@ -38,6 +38,20 @@ class MySQLSettings(BaseModel):
     database: str = Field(default="")
     charset: str = Field(default="utf8mb4")
 
+    # ---------------- MySQL 可选连接/驱动参数 ----------------
+    connect_timeout: int = Field(
+        default=10,
+        description="建立数据库连接的超时时间（秒）"
+    )
+    autocommit: bool = Field(
+        default=False,
+        description="是否默认开启自动提交事务"
+    )
+    sql_mode: str = Field(
+        default="",
+        description="SQL 模式设置，例如: STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER"
+    )
+
 
 class PGSettings(BaseModel):
     """PostgreSQL 连接参数；connection_string 非空时优先于离散字段。"""
