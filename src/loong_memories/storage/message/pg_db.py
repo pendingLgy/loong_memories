@@ -127,19 +127,23 @@ class PGDB(DBEngine):
             )
             parse_connection_string = url.render_as_string(hide_password=False)
 
-        self.engine = create_engine(
-            parse_connection_string,
-            echo=self.print_sql,
-            pool_size=self.pool_size,
-            max_overflow=self.max_overflow,
-            pool_timeout=self.pool_timeout,
-            pool_recycle=self.pool_recycle,
-            pool_pre_ping=self.pool_pre_ping,
-        )
+        try:
+            self.engine = create_engine(
+                parse_connection_string,
+                echo=self.print_sql,
+                pool_size=self.pool_size,
+                max_overflow=self.max_overflow,
+                pool_timeout=self.pool_timeout,
+                pool_recycle=self.pool_recycle,
+                pool_pre_ping=self.pool_pre_ping,
+            )
 
-        self.SessionLocal = sessionmaker(bind=self.engine)
+            self.SessionLocal = sessionmaker(bind=self.engine)
 
-        self._init_db(self.engine, self.SessionLocal)
+            self._init_db(self.engine, self.SessionLocal)
+
+        except Exception as exc:
+            raise StorageError("无法创建同步 PG 引擎：" + str(exc)) from exc
 
         if self.print_sql:
             # 开启 SQLAlchemy engine 和 pool 的调试日志
