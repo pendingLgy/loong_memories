@@ -1,0 +1,152 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loong_memories"
+dynamic = ["version"]
+description = 'llm long memory '
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "loong", email = "longgyx@gmail.com" },
+]
+
+
+[project.urls]
+Documentation = "https://github.com/loong/loong-memories#readme"
+Issues = "https://github.com/loong/loong-memories/issues"
+Source = "https://github.com/loong/loong-memories"
+
+[tool.hatch.version]
+path = "src/loong_memories/__about__.py"
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+
+
+
+dependencies = [
+  "openai==3.26.0",
+  "PyYAML>=6.0.3",
+  "pydantic>=2.5",
+  "pydantic-settings>=2.1",
+]
+
+[project.optional-dependencies]
+parsers = [
+  "unstructured>=0.12",
+  "spacy>=3.8.16",
+  "zh_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl",
+  "zh_core_web_md @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_md-3.8.0/zh_core_web_md-3.8.0-py3-none-any.whl",
+]
+
+milvus = ["pymilvus>=2.3"]
+
+sqlalchemy = [
+  "SQLAlchemy>=2.0",
+  "greenlet>=3.5.6",
+  "aiosqlite>=0.19",
+]
+
+pg = [
+  "psycopg[binary]>=3.1",
+  "pgvector>=0.5.1",
+  "asyncpg>=0.32.0"
+]
+
+mysql = [
+  "pymysql>=1.1",
+  "aiomysql>=0.3.2"
+]
+
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=1.4.0",
+  "pytest-cov>=4.1",
+  "mypy>=1.8",
+  "ruff>=0.1.9",
+]
+
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.envs.default]
+installer = "pip"
+features = [
+  "parsers",
+  "sqlalchemy",
+  "dev",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest"
+types = "mypy src tests"
+check = "ruff check src tests"
+format = "ruff format src tests"
+
+
+[tool.hatch.envs.loong_memories_dev]
+installer = "pip"
+features = [
+  "parsers",
+  "sqlalchemy",
+  "pg",
+  "mysql",
+  "milvus",
+  "dev",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
+
+#addopts = "-s -q -rs -m 'integration'"
+addopts = "-s -q -rs"
+
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)s] [%(pathname)s:%(funcName)s() %(lineno)d] %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+
+[tool.hatch.envs.types]
+extra-dependencies = [
+  "mypy>=1.0.0",
+]
+
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/loong_memories tests}"
+
+[tool.coverage.run]
+source_pkgs = ["loong_memories", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/loong_memories/__about__.py",
+]
+
+[tool.coverage.paths]
+loong_memories = ["src/loong_memories", "*/loong-memories/src/loong_memories"]
+tests = ["tests", "*/loong-memories/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
