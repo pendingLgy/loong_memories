@@ -33,6 +33,28 @@ class PGVectorSettings(BaseModel):
     # 是否尝试 DiskANN 索引（需 vectorscale 扩展；缺失时自动回退 HNSW）。
     use_diskann: bool = Field(default=False)
 
+    # ---------------- 扩展的高级/可选连接参数 ----------------
+
+    sslmode: str = Field(
+        default="prefer",
+        description="SSL 加密模式：disable, allow, prefer, require, verify-ca, verify-full"
+    )
+    connect_timeout: int = Field(
+        default=5,
+        description="建立连接的最大等待时间（秒）"
+    )
+    application_name: str = Field(
+        default="",
+        description="客户端应用名称（便于在数据库端监控查询来源）"
+    )
+    options: str = Field(
+        default="",
+        description="会话启动参数，例如传递时区或编码：-c timezone=UTC"
+    )
+    target_session_attrs: str = Field(
+        default="any",
+        description="高可用/集群路由目标：any（任意）, read-write（仅连接可写主库）"
+    )
 
 class VectorSettings(BaseModel):
     """向量库分区：按 milvus、pg 承载连接参数，并统一集合与检索默认值。"""

@@ -78,7 +78,7 @@ class VectorEngine:
         self,
         vectors: List[List[float]],
         payloads: Optional[List[Dict[str, Any]]] = None,
-        ids: Optional[List[str]] = None,
+        ids: Optional[List[int]] = None, # 修正为 int
     ) -> int:
         """写入向量及其元数据，返回写入条数。"""
         if not vectors:
@@ -143,18 +143,8 @@ class VectorEngine:
         """按 id 读取单条，不存在返回 None。"""
         return self._store.get(vector_id)
 
-
-    def list(
-        self,
-        filters: Optional[Dict[str, Any]] = None,
-        top_k: Optional[int] = None,
-    ) -> List[VectorStoreResult]:
-        """列出集合内容；实现返回的嵌套列表在此拍平。"""
-        groups = self._store.list(filters=filters, top_k=top_k) or []
-        results: List[VectorStoreResult] = []
-        for group in groups:
-            results.extend(group)
-        return results
+    def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
+        return self._store.list(filters=filters, top_k=top_k) or []
 
 
     # ---------------- 集合维护 ----------------

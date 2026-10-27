@@ -5,10 +5,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Type
+from typing import Dict, List, Any
 
 from loong_memories.registry import Ref, Registry
-from loong_memories.storage.memories.base import VectorStoreBase
 
 # 内置后端名称到类路径的映射，按需惰性导入。
 BUILTIN_STORES: Dict[str, str] = {
@@ -41,6 +40,6 @@ def available_vector_stores() -> List[str]:
     return _REGISTRY.names()
 
 
-def resolve_vector_store(name: str) -> Type[VectorStoreBase]:
+def resolve_vector_store(name: str) -> Any:
     "按后端名取得实现类，路径登记的在此惰性导入。"
     return _REGISTRY.resolve(name)

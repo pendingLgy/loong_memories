@@ -185,8 +185,8 @@ class MilvusVectorStore(VectorStoreBase):
                 operands.append("tenant_id == " + str(value))
             elif key == 'user_id' and isinstance(value, int):
                 operands.append("user_id == " + str(value))
-            elif key == 'text_lemm' and isinstance(value, str):
-                operands.append("text_lemm == " + str(value))
+            elif key == 'text_lemma' and isinstance(value, str):
+                operands.append("text_lemma == " + str(value))
             else:
                 if isinstance(value, bool):
                     operands.append("(metadata[" + json.dumps(key) + "] == " + str(value).lower() + ")")
@@ -250,7 +250,7 @@ class MilvusVectorStore(VectorStoreBase):
     def update(self, id: int, vector: Optional[List[float]] = None, payload: Optional[Dict[str, Any]] = None) -> None:
         """按 id 更新；缺省字段沿用已有记录。"""
         if vector is None or payload is None:
-            existing = self.client.get(collection_name=self.collection_name, ids=id)
+            existing = self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
             if not existing:
                 raise StorageError("待更新的向量不存在：" + str(id))
             if vector is None:
@@ -261,7 +261,7 @@ class MilvusVectorStore(VectorStoreBase):
 
     def get(self, id: int) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        result = self.client.get(collection_name=self.collection_name, ids=id)
+        result = self.client.get(consistency_level="Strong",collection_name=self.collection_name, ids=id)
         if not result:
             return None
         item = result[0]
@@ -273,7 +273,7 @@ class MilvusVectorStore(VectorStoreBase):
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
         kwargs = self._build_param_search(filters, top_k, vectors)
         try:
-            hits = self.client.search(**kwargs)
+            hits = self.client.search(consistency_level="Strong",**kwargs)
         except Exception as exc:
             raise StorageError("Milvus 检索失败：" + str(exc)) from exc
         return self._parse(hits[0] if hits else [])
@@ -283,6 +283,7 @@ class MilvusVectorStore(VectorStoreBase):
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入。"""
         try:
             hits = self.client.search(
+                consistency_level="Strong",
                 collection_name=self.collection_name,
                 data=[query],
                 anns_field="sparse",
@@ -298,6 +299,7 @@ class MilvusVectorStore(VectorStoreBase):
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
         rows = self.client.query(
+            consistency_level="Strong",
             collection_name=self.collection_name,
             filter=self._create_filter(filters),
             limit=top_k or 100,
@@ -402,7 +404,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
     ) -> None:
         """按 id 更新；缺省字段沿用已有记录。"""
         if vector is None or payload is None:
-            existing = await self.client.get(collection_name=self.collection_name, ids=id)
+            existing = await self.client.get(consistency_level="Strong",collection_name=self.collection_name, ids=id)
             if not existing:
                 raise StorageError('待更新的向量不存在：' + str(id))
             if vector is None:
@@ -413,7 +415,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
 
     async def get(self, id: int) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        result = await self.client.get(collection_name=self.collection_name, ids=id)
+        result = await self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
         if not result:
             return None
         return VectorStoreResult.to_vector_store_result(**result[0])
@@ -424,7 +426,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
         kwargs = self._build_param_search(filters, top_k, vectors)
         try:
-            hits = await self.client.search(**kwargs)
+            hits = await self.client.search(consistency_level="Strong",**kwargs)
         except Exception as exc:
             raise StorageError('Milvus 异步检索失败：' + str(exc)) from exc
         return self._parse(hits[0] if hits else [])
@@ -435,6 +437,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入；失败返回 None，与同步实现一致。"""
         try:
             hits = await self.client.search(
+                consistency_level="Strong",
                 collection_name=self.collection_name,
                 data=[query],
                 anns_field='sparse',
@@ -451,6 +454,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
     ) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
         rows = await self.client.query(
+            consistency_level="Strong",
             collection_name=self.collection_name,
             filter=self._create_filter(filters),
             limit=top_k or 100,

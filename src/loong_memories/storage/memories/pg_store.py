@@ -140,6 +140,11 @@ class PGVectorStore(VectorStoreBase):
             pool_timeout: int = 30,
             pool_recycle: int = 1800,
             pool_pre_ping: bool = True,
+            sslmode: str = "prefer",
+            connect_timeout: int = 5,
+            application_name: str = "",
+            options: str = "",
+            target_session_attrs: str = "any",
     ) -> None:
 
         self.connection_string = connection_string
@@ -158,6 +163,13 @@ class PGVectorStore(VectorStoreBase):
         self.pool_timeout = pool_timeout
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
+
+        # 新增的 PG 高级/可选连接参数绑定
+        self.sslmode = sslmode
+        self.connect_timeout = connect_timeout
+        self.application_name = application_name
+        self.options = options
+        self.target_session_attrs = target_session_attrs
 
         self.metadata_obj = MetaData()
 
@@ -178,6 +190,13 @@ class PGVectorStore(VectorStoreBase):
                 host=self.host,
                 port=self.port,
                 database=self.database,
+                query={
+                    "sslmode": self.sslmode,
+                    "connect_timeout": str(self.connect_timeout),
+                    "application_name": self.application_name,
+                    **({"options": self.options} if self.options else {}),
+                    "target_session_attrs": self.target_session_attrs,
+                }
             )
             self.connection_string = url.render_as_string(hide_password=False)
 
@@ -482,8 +501,6 @@ class PGVectorStore(VectorStoreBase):
         return results
 
 
-
-
 class AsyncPGVectorStore(PGVectorStore):
     """基于 PostgreSQL、pgvector 与 SQLAlchemy Asyncio 的异步向量库实现；表即集合。"""
 
@@ -508,6 +525,11 @@ class AsyncPGVectorStore(PGVectorStore):
             pool_timeout: int = 30,
             pool_recycle: int = 1800,
             pool_pre_ping: bool = True,
+            sslmode: str = "prefer",
+            connect_timeout: int = 5,
+            application_name: str = "",
+            options: str = "",
+            target_session_attrs: str = "any",
     ) -> None:
 
         self.connection_string = connection_string
@@ -526,6 +548,13 @@ class AsyncPGVectorStore(PGVectorStore):
         self.pool_timeout = pool_timeout
         self.pool_recycle = pool_recycle
         self.pool_pre_ping = pool_pre_ping
+
+        # 新增的 PG 高级/可选连接参数绑定
+        self.sslmode = sslmode
+        self.connect_timeout = connect_timeout
+        self.application_name = application_name
+        self.options = options
+        self.target_session_attrs = target_session_attrs
 
         self.metadata_obj = MetaData()
 
@@ -549,8 +578,15 @@ class AsyncPGVectorStore(PGVectorStore):
                 host=self.host,
                 port=self.port,
                 database=self.database,
+                query={
+                    "application_name": self.application_name,
+                    **({"options": self.options} if self.options else {}),
+                    "target_session_attrs": self.target_session_attrs,
+                }
             )
             self.connection_string = url.render_as_string(hide_password=False)
+
+        ssl_arg = True if self.sslmode in ("require", "verify-ca", "verify-full", "prefer") else False
 
         try:
             self.engine: AsyncEngine = create_async_engine(
@@ -561,6 +597,10 @@ class AsyncPGVectorStore(PGVectorStore):
                 pool_timeout=self.pool_timeout,
                 pool_recycle=self.pool_recycle,
                 pool_pre_ping=self.pool_pre_ping,
+                connect_args={
+                    "timeout": float(self.connect_timeout),  # asyncpg 要求 timeout 为数字（秒）
+                    "ssl": ssl_arg,
+                }
             )
 
             if self.print_sql:
