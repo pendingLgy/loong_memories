@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Type
+from typing import TYPE_CHECKING, Dict, List, Type
 
-from loong_memories.llm.base import BaseLLMProvider
 from loong_memories.registry import Ref, Registry
+
+if TYPE_CHECKING:  # 仅在类型检查期引用，避免与 base 形成导入环
+    from loong_memories.llm.base import BaseLLMProvider
 
 # 内置 provider 名称到类路径的映射，按需惰性导入。
 BUILTIN_PROVIDERS: Dict[str, str] = {

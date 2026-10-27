@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Type
+from typing import Dict, List, Any
 
-from loong_memories.embedding import BaseEmbedder
 from loong_memories.registry import Ref, Registry
 
 # 内置 embedder 名称到类路径的映射，按需惰性导入。
@@ -40,6 +39,6 @@ def available_embedders() -> List[str]:
     return _REGISTRY.names()
 
 
-def resolve_embedder(name: str) -> Type[BaseEmbedder]:
+def resolve_embedder(name: str) -> Any:
     """按 embedder 名取得实现类，路径登记的在此时惰性导入。"""
     return _REGISTRY.resolve(name)
