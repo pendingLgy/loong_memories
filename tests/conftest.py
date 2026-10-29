@@ -60,11 +60,11 @@ CONFIG_EMBEDDING = {
     'enable': True,
     'provider': 'openai',
     'model': 'text-embedding-3-small',
-    'batch_size': 64,
+    'batch_size': 10,
     'dim': 1024,
     'api_key': 'sk-test-embedding',
     'base_url': 'https://api.example.com/v1',
-    'timeout': 30.0,
+    'timeout': 5.0
 }
 
 CONFIG_EMBEDDING_JSON = _dumps(CONFIG_EMBEDDING)
@@ -95,7 +95,7 @@ CONFIG_DB = {
     'backend': 'sqlite',
     'table_prefix': 'lm_',
     'sqlite': {
-        'path': 'F:\\workspace\\code\\python\\loong_memories\\test.db',
+        'db_path': 'F:\\workspace\\code\\python\\loong_memories\\test.db',
         # ---------------- SQLite 可选参数 ----------------
         'timeout': 30.0,
         'isolation_level': '',

@@ -39,7 +39,7 @@ class BaseDB(ABC):
             register_db(name, cls)
 
     @abstractmethod
-    def _start(self) -> Engine:
+    def start(self) -> Engine:
         """启动数据库连接"""
 
     @abstractmethod

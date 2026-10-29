@@ -29,7 +29,7 @@ class QwenLLMProvider(OpenAILLMProvider):
     """调用 DashScope 兼容接口；默认模型与端点属类属性，可按部署环境覆盖。"""
 
     backend = "qwen"
-    default_model = "qwen3.7-plus"
+    default_model = "qwen3.7-flash"
     default_base_url = "https://llm-aa9vce2460xvbj3o.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     api_key_env = "DASHSCOPE_API_KEY"
 

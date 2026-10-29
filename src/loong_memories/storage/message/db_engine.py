@@ -201,7 +201,7 @@ class DBEngine(BaseDB):
             .limit(limit)
             .subquery()
         )
-        stmt = select(recent).order_by(recent.c.created_at_tz.asc())
+        stmt = select(recent).order_by(recent.c.id.asc())
         with self._session() as session:
             rows = session.execute(stmt).mappings().all()
         return [self._to_message(dict(row)) for row in rows]
@@ -232,6 +232,7 @@ class AsyncDBEngine(DBEngine):
     """基于 SQLAlchemy Core 的通用实现：单引擎加互斥锁，方言差异由子类提供连接串。"""
 
     def __init__(self, table_prefix: str = "") -> None:
+        super().__init__(table_prefix=table_prefix)
         self.engine = None
         self.AsyncSessionLocal = None
         self.table_prefix = table_prefix
@@ -240,7 +241,6 @@ class AsyncDBEngine(DBEngine):
         self.METADATA = MetaData()
         self.history_table = get_history_table(self.METADATA, table_prefix)
         self.messages_table = get_messages_table(self.METADATA, table_prefix)
-        super().__init__()
 
     async def _init_db(self, engine, asyncSessionLocal):
         self.engine = engine
@@ -259,7 +259,7 @@ class AsyncDBEngine(DBEngine):
         await self._ensure_schema()
 
     @abstractmethod
-    async def _start(self) -> Engine:
+    async def start(self) -> Engine:
         """创建并返回 SQLAlchemy 引擎。"""
 
     @asynccontextmanager
@@ -348,11 +348,11 @@ class AsyncDBEngine(DBEngine):
                 table.c.content, table.c.name, table.c.created_at_tz,
             )
             .where(table.c.session_scope == session_scope)
-            .order_by(table.c.created_at_tz.desc(), table.c.id.desc())
+            .order_by(table.c.id.desc())
             .limit(limit)
             .subquery()
         )
-        stmt = select(recent).order_by(recent.c.created_at_tz.asc())
+        stmt = select(recent).order_by(recent.c.id.desc())
         async with self._session() as session:
             result = await session.execute(stmt)
             rows = result.mappings().all()

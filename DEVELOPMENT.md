@@ -37,7 +37,7 @@ hatch env prune                       # 清掉不再使用的环境
 需要临时补装包时也走 hatch，避免污染全局：
 
 ```bash
-hatch run pip install <package>
+hatch run loong_memories_dev:pip list
 hatch run loong_memories_dev:pip install <package>
 
 hatch run loong_memories_dev:pip install pipdeptree # 安装依赖树查看库
@@ -160,7 +160,10 @@ hatch run loong_memories_dev:pytest tests --integration -q -k pg
 hatch run loong_memories_dev:pytest tests --integration -q -k milvus #只运行测试函数名称中包含 milvus 的测试用例
 
 hatch run loong_memories_dev:pytest -m 'integration' --integration tests/test_milvus_store.py -v -s
+hatch run loong_memories_dev:pytest -m 'integration' --integration tests/test_integration_stores.py::TestAsyncMemoryStoreIntegration -v -s
+hatch run loong_memories_dev:pytest -m 'integration' --integration tests/test_integration_stores.py::TestAsyncMemoryStoreIntegration::test_real_store_insert_and_get -v -s
 hatch run loong_memories_dev:pytest -m 'not integration' tests/test_milvus_store.py -v -s
+
 ```
 
 `hatch run` 的 `-o addopts=` 覆盖对 hatch 脚本同样生效；`hatch run test` 走的是 pyproject 里的 `test = "pytest"`，不额外传参时等于 `pytest` 加默认 `addopts`。

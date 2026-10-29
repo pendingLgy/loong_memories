@@ -133,8 +133,8 @@ class MilvusVectorStore(VectorStoreBase):
             # sparse 由 BM25 函数按 text 自动生成，稠密检索与关键词检索共用该集合。
             FieldSchema(name="sparse", dtype=DataType.SPARSE_FLOAT_VECTOR),
             # 声明带时区的日期时间字段（使用 VARCHAR 存储 ISO 8601 字符串）
-            FieldSchema(name="updated_at_tz", dtype=DataType.TIMESTAMPTZ),
-            FieldSchema(name="created_at_tz", dtype=DataType.TIMESTAMPTZ),
+            FieldSchema(name="updated_at_tz", dtype=DataType.TIMESTAMPTZ, nullable=True),
+            FieldSchema(name="created_at_tz", dtype=DataType.TIMESTAMPTZ, nullable=True),
         ]
         schema = CollectionSchema(fields, enable_dynamic_field=True)
         schema.add_function(Function(name="text_lemma_bm25", input_field_names=["text_lemma"], output_field_names=["sparse"], function_type=FunctionType.BM25))
@@ -144,20 +144,14 @@ class MilvusVectorStore(VectorStoreBase):
 
     def _record(self, rid: int, vector: List[float], payload: Dict[str, Any]) -> Dict[str, Any]:
         """组装写入记录：text 优先取 text_lemmatized，回退 data 或 text。"""
-        metadata = copy(payload) if payload else {}
-        tenant_id = _as_scope_int(metadata.get("tenant_id"))
-        user_id = _as_scope_int(metadata.get("user_id"))
-        text = metadata.get("text") or ""
-        text_lemma = metadata.get("text_lemma") or metadata.get("data") or metadata.get("text") or ""
-        updated_at_tz = metadata.get("created_at_tz") or ""
-        created_at_tz = metadata.get("created_at_tz") or ""
+        metadata = self._build_metadata(payload)
 
-        metadata.pop("tenant_id", None)
-        metadata.pop("user_id", None)
-        metadata.pop("text", None)
-        metadata.pop("text_lemma", None)
-        metadata.pop("created_at_tz", None)
-        metadata.pop("updated_at_tz", None)
+        tenant_id = _as_scope_int(payload.get("tenant_id"))
+        user_id = _as_scope_int(payload.get("user_id"))
+        text = payload.get("text") or ""
+        text_lemma = payload.get("text_lemma") or payload.get("text") or ""
+        updated_at_tz = payload.get("updated_at_tz") or None
+        created_at_tz = payload.get("created_at_tz") or None
 
         return {
             "id": rid,
@@ -167,8 +161,8 @@ class MilvusVectorStore(VectorStoreBase):
             "metadata": metadata,
             "text": str(text)[:_MAX_TEXT_LEN],
             "text_lemma": str(text_lemma)[:_MAX_TEXT_LEN],
-            "created_at_tz": str(created_at_tz)[:64],
-            "updated_at_tz": str(updated_at_tz)[:64],
+            "created_at_tz": created_at_tz,
+            "updated_at_tz": updated_at_tz,
         }
 
 
@@ -240,6 +234,8 @@ class MilvusVectorStore(VectorStoreBase):
         if self.client.has_collection(name):
             logger.info(f"collection {name} is exist")
             return
+
+        logger.info(f"create vector table {name}")
 
         index_params = self.client.prepare_index_params()
         index_params.add_index(field_name="vectors", metric_type=distance, index_type="AUTOINDEX", index_name="vector_index")

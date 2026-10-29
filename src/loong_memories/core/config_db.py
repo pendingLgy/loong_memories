@@ -24,7 +24,7 @@ class SQLiteSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # 库文件路径；留空表示未配置，实例化时会报错。
-    path: str = Field(default="")
+    db_path: str = Field(default="")
 
     # ---------------- SQLite 可选连接/驱动参数 ----------------
     timeout: float = Field(

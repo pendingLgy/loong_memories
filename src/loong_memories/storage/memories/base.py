@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any, ClassVar, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -121,7 +122,27 @@ class VectorStoreBase(ABC):
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容（外层列表按既有约定包裹一层）。"""
 
-    @abstractmethod
     def keyword_search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """关键字（BM25 或全文）检索；不支持的实现返回 None。"""
+        return None
 
+    def _ensure_datetime(self, val):
+        """确保输入是 datetime 对象，如果是字符串则自动解析，为空则给当前 UTC 时间"""
+        if isinstance(val, datetime):
+            return val
+        if isinstance(val, str):
+            try:
+                return datetime.fromisoformat(val.replace('Z', '+00:00'))
+            except ValueError:
+                pass
+        return None
+
+    def _build_metadata(self, payloads:Dict[str, Any]):
+        keys_to_remove = {"text", "text_lemma", "updated_at_tz", "created_at_tz"}
+
+        metadata = {
+            k: v for k, v in (payloads or {}).items()
+            if k not in keys_to_remove
+        }
+
+        return metadata

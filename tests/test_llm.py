@@ -236,7 +236,7 @@ class TestQwenLLMProvider:
         assert issubclass(QwenLLMProvider, OpenAILLMProvider)
 
     def test_class_defaults(self):
-        assert QwenLLMProvider.default_model == 'qwen3.7-plus'
+        assert QwenLLMProvider.default_model == 'qwen3.7-flash'
         assert 'compatible-mode' in QwenLLMProvider.default_base_url
         assert QwenLLMProvider.api_key_env == 'DASHSCOPE_API_KEY'
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from loong_memories.core.config_memory import MemorySettings
 from loong_memories.core.exceptions import ConfigError, DataError, EmbeddingError, LLMError
@@ -50,15 +50,16 @@ from loong_memories.memory.stores import (
     memory_hash,
     now_iso,
     split_payload,
-    to_vector_id_int,
+    to_vector_id_int, AsyncMemoryStore,
 )
 
 from loong_memories.embedding.embedder_handler import EmbedderHandler
 from loong_memories.llm.llm_handler import LLMHandler
 from loong_memories.storage.message.base import BaseDB
-from loong_memories.storage.memories.vector_engine import VectorEngine
-
-
+from loong_memories.storage.memories.vector_engine import VectorEngine, AsyncVectorEngine
+from loong_memories.storage.message.db_engine import AsyncDBEngine, DBEngine
+from loong_memories.storage.message.schema import Message
+from loong_memories.util.snowflake import next_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,10 @@ class MemoryHandler(MemoryBase):
     def __init__(
         self,
         settings: MemorySettings,
-        embedder: Optional["EmbedderHandler"] = None,
-        llm: Optional["LLMHandler"] = None,
-        db: Optional["BaseDB"] = None,
-        vector: Optional["VectorEngine"] = None,
+        embedder: EmbedderHandler,
+        llm: LLMHandler,
+        db: DBEngine,
+        vector: VectorEngine,
     ) -> None:
         self.settings = settings
         self.embedder = embedder
@@ -379,7 +380,7 @@ class MemoryHandler(MemoryBase):
                 continue
             semantic = float(item.score or 0.0)
             # 关键词分数已由后端归一，取不到时按零处理。
-            keyword = float(payload.get("bm25_score") or 0.0)
+            keyword = float(payload.get("score") or 0.0)
             score = semantic + weights * keyword
             scored.append((score, item, payload))
 
@@ -461,3 +462,166 @@ class MemoryHandler(MemoryBase):
         self._log("记忆删除完成", id=memory_id)
         return DeleteResult(id=memory_id)
 
+
+
+class AsyncMemoryHandler(MemoryHandler):
+    """记忆层处理器：四条流程均为同步阻塞，不引入并发。"""
+
+    def __init__(self, settings: MemorySettings, embedder: EmbedderHandler, llm: LLMHandler, db: AsyncDBEngine,
+                 vector: AsyncVectorEngine) -> None:
+        super().__init__(settings, embedder, llm, db, vector)
+        self.settings = settings
+        self.embedder = embedder
+        self.llm = llm
+        self.db = db
+        self.vector = vector
+        self._validate()
+        self.store = AsyncMemoryStore(vector, db=db)
+
+
+    async def add(
+        self,
+        messages: Any,
+        *,
+        user_id: Optional[Any] = None,
+        agent_id: Optional[Any] = None,
+        run_id: Optional[Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> AddResult:
+        """写入记忆：先由大模型抽取事实，去重后批量落库。"""
+        scope, query = build_scope(
+            user_id=user_id,
+            agent_id=agent_id,
+            run_id=run_id,
+            metadata=metadata,
+        )
+        normalized = self._normalize_messages(messages)
+
+        # 先召回既有记忆：既作为抽取上下文，也用于库内去重。
+        existing, existing_hashes = await self._recall_existing(normalized, query)
+        session = session_scope(query)
+        history = await self.store.load_history(session, DEFAULT_HISTORY_MESSAGES)
+        # 与 mem0 一致：仅 agent 作用域（有 agent_id 且无 user_id）附加实体上下文后缀。
+        agent_scoped = bool(query.get("agent_id")) and not query.get("user_id")
+        facts = self._extract_facts(normalized, existing, history, agent_scoped=agent_scoped)
+
+        recorded = self._persist_facts(facts, scope, existing_hashes, session, normalized)
+        self._log("记忆写入完成", added=len(recorded))
+        return AddResult(results=recorded)
+
+
+    async def _recall_existing(self, messages: List[Dict[str, Any]], query: Dict[str, Any]):
+        """召回既有记忆：返回 [id, text] 列表与指纹集合，供提示词与去重共用。"""
+        keyword = " ".join(message["content"] for message in messages if message.get("content"))
+        vector = self._embed([keyword])[0]
+        existing = await self.store.recall(keyword, vector, query, DEFAULT_CONTEXT_TOP_K)
+        items: List[Dict[str, Any]] = []
+        hashes = set()
+        for item in existing:
+            payload = item.payload or {}
+            text = payload.get("data")
+            if not isinstance(text, str) or not text:
+                continue
+            # 提示词要求既有记忆为 [{"id": ..., "text": ...}] 结构。
+            items.append({"id": str(item.id), "text": text})
+            digest = payload.get("hash")
+            if isinstance(digest, str) and digest:
+                hashes.add(digest)
+        return items, hashes
+
+
+    async def _persist_facts(
+        self,
+        facts: List[str],
+        scope: Dict[str, Any],
+        existing_hashes: set,
+        session: str,
+        messages: List[Dict[str, Any]],
+    ) -> List[MemoryItem]:
+        """去重、批量嵌入并落库；返回本次真正新增的条目。"""
+        unique: List[str] = []
+        seen = set(existing_hashes)
+        for text in facts:
+            digest = memory_hash(text)
+            if digest in seen:
+                continue
+            seen.add(digest)
+            unique.append(text)
+
+        if not unique:
+            # 没有新增也要保存消息，保证会话上下文连续。
+            await self.store._save_messages(self._to_message_objects(messages, session), session)
+            return []
+
+        vectors = self._embed(unique)
+        entries = []
+        results: List[MemoryItem] = []
+        for text, vector in zip(unique, vectors):
+            memory_id = next_id()
+            payload = build_payload(text, scope)
+            entries.append({"id": memory_id, "vector": vector, "payload": payload})
+            results.append(self._to_item(memory_id, payload, None))
+
+
+        await self.store.insert_memories(entries, session, self._to_message_objects(messages, session))
+        return results
+
+    async def search(
+        self,
+        query: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: Optional[int] = None,
+        threshold: Optional[float] = None,
+    ) -> SearchResult:
+        """检索记忆：语义与关键词双路召回取并集，融合打分后过滤与截断。"""
+        limit = DEFAULT_TOP_K if top_k is None else top_k
+        floor = DEFAULT_THRESHOLD if threshold is None else threshold
+        validate_search_params(floor, limit)
+        text = validate_query(query)
+        scope = self._build_filters(filters)
+
+        recall_k = max(limit * 4, 60)
+        vector = self._embed([text])[0]
+        candidates = await self.store.recall(text, vector, scope, recall_k)
+        results = self._fuse_and_rank(candidates, floor, limit)
+        self._log("记忆检索完成", candidates=len(candidates), hits=len(results))
+        return SearchResult(results=results)
+
+
+    async def update(
+        self,
+        memory_id: int,
+        text: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> UpdateResult:
+        """更新记忆：正文变化才重算向量，元数据合并后覆盖旧值。"""
+        if text is None and metadata is None:
+            raise DataError("text 与 metadata 至少提供一个")
+        current = await self.store.get_memory(memory_id)
+        if current is None:
+            raise DataError("记忆不存在：" + str(memory_id))
+        payload, previous, changed = self._merge_payload(current.payload, text, metadata)
+
+        if changed:
+            vector = self._embed([payload["data"]])[0]
+        else:
+            # 正文未变：传 None 让后端保留原向量，避免无谓的嵌入调用。
+            vector = None
+
+        await self.store.update_memory(memory_id, vector, payload, previous)
+        self._log("记忆更新完成", id=memory_id, text_changed=changed)
+        return UpdateResult(result=self._to_item(memory_id, payload, None))
+
+
+    # ---------------- 流程四：删除 ----------------
+
+    async def delete(self, memory_id: int) -> DeleteResult:
+        """删除记忆：向量库物理删除，历史表写入 DELETE 审计记录。"""
+        current = await self.store.get_memory(memory_id)
+        if current is None:
+            raise DataError("记忆不存在：" + str(memory_id))
+        payload = current.payload or {}
+        await self.store.delete_memory(memory_id, payload.get("data"), payload)
+        self._log("记忆删除完成", id=memory_id)
+        return DeleteResult(id=memory_id)

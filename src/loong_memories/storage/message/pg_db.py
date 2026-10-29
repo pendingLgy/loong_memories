@@ -105,7 +105,7 @@ class PGDB(DBEngine):
         self.target_session_attrs = target_session_attrs
         super().__init__(table_prefix=table_prefix)
 
-    def _start(self) -> Engine:
+    def start(self) -> Engine:
         """用离散参数或连接串建立引擎，驱动名按可用库选择。"""
 
         if not _PG_DRIVER:
@@ -236,7 +236,7 @@ class AsyncPGDB(AsyncDBEngine):
 
         super().__init__(table_prefix=table_prefix)
 
-    async def _start(self) -> AsyncEngine:
+    async def start(self) -> AsyncEngine:
         """用离散参数或连接串建立异步引擎，驱动名按可用库选择。"""
 
         if not _ASYNC_PG_DRIVER:
@@ -263,8 +263,8 @@ class AsyncPGDB(AsyncDBEngine):
                 password=self.password,
                 host=self.host,
                 port=self.port,
+                database=self.database,
                 query={
-                    "application_name": self.application_name,
                     **({"options": self.options} if self.options else {}),
                     "target_session_attrs": self.target_session_attrs,
                 }
@@ -272,6 +272,18 @@ class AsyncPGDB(AsyncDBEngine):
             parse_connection_string = url.render_as_string(hide_password=False)
 
         ssl_arg = True if self.sslmode in ("require", "verify-ca", "verify-full", "prefer") else False
+        # 构建专属于 asyncpg 的 connect_args
+        connect_args = {
+            "timeout": float(self.connect_timeout),  # asyncpg 要求 timeout 为数字（秒）
+            "ssl": ssl_arg,
+        }
+
+        # 将 application_name 正确放入 asyncpg 的 server_settings 中
+        if self.application_name:
+            connect_args["server_settings"] = {
+                "application_name": self.application_name
+            }
+
         try:
             self.engine = create_async_engine(
                 parse_connection_string,
@@ -281,10 +293,7 @@ class AsyncPGDB(AsyncDBEngine):
                 pool_timeout=self.pool_timeout,
                 pool_recycle=self.pool_recycle,
                 pool_pre_ping=self.pool_pre_ping,
-                connect_args={
-                    "timeout": float(self.connect_timeout),  # asyncpg 要求 timeout 为数字（秒）
-                    "ssl": ssl_arg,
-                }
+                connect_args=connect_args
             )
             self.session_local = async_sessionmaker(
                 bind=self.engine,
@@ -322,6 +331,11 @@ class AsyncPGDB(AsyncDBEngine):
 
         async with self.engine.begin() as conn:
             result = await conn.execute(query, params)
-            existing = {row[0] for row in result.fetchall()}
+            existing_tables = {row[0] for row in result.fetchall()}
 
-        return [table for table in all_tables if table.name not in existing]
+        missing_tables = [table for table in all_tables if table.name not in existing_tables]
+
+        for table in missing_tables:
+            logger.info(f"table {table.name} is missing")
+
+        return missing_tables

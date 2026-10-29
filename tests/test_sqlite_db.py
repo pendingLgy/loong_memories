@@ -106,7 +106,7 @@ class TestSQLiteDB:
     def test_init_stores_conftest_values(self, db_settings):
         pool = db_settings.pool_config
         db = SQLiteDB(
-            db_path=db_settings.sqlite.path,
+            db_path=db_settings.sqlite.db_path,
             print_sql=pool.print_sql,
             pool_size=pool.pool_size,
             max_overflow=pool.max_overflow,
@@ -115,7 +115,7 @@ class TestSQLiteDB:
             pool_pre_ping=pool.pool_pre_ping,
             table_prefix=db_settings.table_prefix,
         )
-        assert db.db_path == db_settings.sqlite.path
+        assert db.db_path == db_settings.sqlite.db_path
         assert db.print_sql == pool.print_sql
         assert (db.pool_size, db.max_overflow, db.pool_timeout) == (pool.pool_size, pool.max_overflow, pool.pool_timeout)
         assert (db.pool_recycle, db.pool_pre_ping) == (pool.pool_recycle, pool.pool_pre_ping)
@@ -162,7 +162,7 @@ class TestAsyncSQLiteDB:
     def test_init_stores_conftest_values(self, async_db_settings):
         pool = async_db_settings.pool_config
         db = AsyncSQLiteDB(
-            db_path=async_db_settings.sqlite.path,
+            db_path=async_db_settings.sqlite.db_path,
             print_sql=pool.print_sql,
             pool_size=pool.pool_size,
             max_overflow=pool.max_overflow,
@@ -170,7 +170,7 @@ class TestAsyncSQLiteDB:
             pool_recycle=pool.pool_recycle,
             pool_pre_ping=pool.pool_pre_ping,
         )
-        assert db.db_path == async_db_settings.sqlite.path
+        assert db.db_path == async_db_settings.sqlite.db_path
         assert db.print_sql == pool.print_sql
         assert (db.pool_size, db.max_overflow, db.pool_timeout) == (pool.pool_size, pool.max_overflow, pool.pool_timeout)
         assert (db.pool_recycle, db.pool_pre_ping) == (pool.pool_recycle, pool.pool_pre_ping)
@@ -202,7 +202,7 @@ class TestSQLiteDBIntegration:
         '''建库并完成初始化（_start 仅作 fixture 引导）。'''
         pool = db_settings.pool_config
 
-        path = db_settings.sqlite.path
+        path = db_settings.sqlite.db_path
         db_file = Path(path).resolve()
 
         db = SQLiteDB(
@@ -332,7 +332,7 @@ class TestAsyncSQLiteDBIntegration:
         '''
         prefix = async_db_settings.table_prefix
         pool = async_db_settings.pool_config
-        path = async_db_settings.sqlite.path
+        path = async_db_settings.sqlite.db_path
         db_file = Path(path).resolve()
         db = AsyncSQLiteDB(
             db_path=str(db_file),

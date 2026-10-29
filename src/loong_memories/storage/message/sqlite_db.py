@@ -89,7 +89,7 @@ class SQLiteDB(DBEngine):
 
         super().__init__(table_prefix=table_prefix)
 
-    def _start(self) -> Engine:
+    def start(self) -> Engine:
         """补齐库文件目录后建立引擎与会话工厂，随后确保表存在。"""
 
         if not self.db_path:
@@ -183,7 +183,7 @@ class AsyncSQLiteDB(AsyncDBEngine):
 
         super().__init__(table_prefix=table_prefix)
 
-    async def _start(self) -> AsyncEngine:
+    async def start(self) -> AsyncEngine:
         """补齐库文件目录后建立异步引擎与会话工厂，随后确保表存在。"""
 
         if not _ASYNC_SQLITE_DRIVER:

@@ -285,20 +285,29 @@ class PGVectorStore(VectorStoreBase):
 
 
     def _build_sql_insert(self, ids: list[int], payloads: list[dict[str, Any]], vectors: list[list[float | int]]) -> list:
-        rows = [
-            {
+        rows = []
+
+        for rid, vector, item in zip(ids, vectors, payloads):
+            tenant_id = item.get("tenant_id")
+            user_id = item.get("user_id")
+            metadata = self._build_metadata(item)
+            updated_at_tz = item.get("updated_at_tz")
+            created_at_tz = item.get("created_at_tz")
+
+            data = {
                 "id": rid,
-                "tenant_id": item.get("tenant_id"),
-                "user_id": item.get("user_id"),
+                "tenant_id": int(tenant_id) if tenant_id else None,
+                "user_id": int(user_id) if user_id else None,
                 "vector": vector,
-                "metadata": item.get("metadata"),
+                "metadata": metadata,
                 "text": item.get("text"),
                 "text_lemma": item.get("text_lemma"),
-                "updated_at_tz": item.get("updated_at_tz"),
-                "created_at_tz": item.get("created_at_tz"),
+                "updated_at_tz": self._ensure_datetime(updated_at_tz),
+                "created_at_tz": self._ensure_datetime(created_at_tz),
             }
-            for rid, vector, item in zip(ids, vectors, payloads)
-        ]
+
+            rows.append(data)
+
         return rows
 
     def _build_sql_delete(self, id: int) -> Delete:
@@ -315,7 +324,11 @@ class PGVectorStore(VectorStoreBase):
         if vector is not None:
             update_data["vector"] = vector
         if payload is not None:
-            update_data["metadata"] = payload
+            update_data["metadata"] = self._build_metadata(payload)
+
+        update_data["text"] = payload.get("text",None)
+        update_data["text_lemma"] = payload.get("text_lemma",None)
+        update_data["updated_at_tz"] = self._ensure_datetime(payload.get("updated_at_tz"))
 
         stmt = update(table).where(table.c.id == id).values(**update_data)
         return stmt
@@ -411,6 +424,8 @@ class PGVectorStore(VectorStoreBase):
                 logger.info(f"table {table.name} is exist")
                 return
 
+            logger.info(f"create vector table {table.name}")
+
             conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
             table.create(conn, checkfirst=True)
 
@@ -436,6 +451,52 @@ class PGVectorStore(VectorStoreBase):
         with self._session() as session:
             session.execute(insert(table), rows)
 
+    def _normalize_cosine_score(self, distance: float) -> float:
+        """
+        将 PostgreSQL 的余弦距离 (<=>) 转换为余弦相似度
+        距离 0 -> 相似度 1.0 (完全相同)
+        距离 2 -> 相似度 0.0 (完全相反)
+        """
+        # 理论上余弦距离在 [0, 2]，转换为 [0, 1] 的相似度
+        similarity = 1.0 - (distance / 2.0)
+        # 加上边界保护，防止浮点数精度误差导致越界
+        return max(0.0, min(1.0, similarity))
+
+    def _normalize_unbounded_score(self, raw_score: float) -> float:
+        """无上限正向评分归一化：将 [0, +inf) 映射到 [0, 1)"""
+        if raw_score <= 0:
+            return 0.0
+        return raw_score / (1.0 + raw_score)
+
+    def _parse_keysearch(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
+        # 将时间字段转换为字符串（若存在且不为 None）
+        if row_dict.get("created_at_tz") is not None:
+            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
+
+        if row_dict.get("updated_at_tz") is not None:
+            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
+
+        score = row_dict["score"] if row_dict.get("score") is not None else 0.0
+        row_dict["score"] = self._normalize_unbounded_score(score)
+
+        store = VectorStoreResult.to_vector_store_result(**row_dict)
+        return store
+
+
+    def _parse_search(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
+        # 将时间字段转换为字符串（若存在且不为 None）
+        if row_dict.get("created_at_tz") is not None:
+            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
+
+        if row_dict.get("updated_at_tz") is not None:
+            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
+
+        score = row_dict["score"] if row_dict.get("score") is not None else 2.0
+        row_dict["score"] = self._normalize_cosine_score(score)
+
+        store = VectorStoreResult.to_vector_store_result(**row_dict)
+        return store
+
     def _parse(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
         # 将时间字段转换为字符串（若存在且不为 None）
         if row_dict.get("created_at_tz") is not None:
@@ -455,7 +516,7 @@ class PGVectorStore(VectorStoreBase):
         results: List[VectorStoreResult] = []
         for row in rows:
             row_dict = row._asdict()
-            results.append(self._parse(row_dict))
+            results.append(self._parse_search(row_dict))
         return results
 
     def keyword_search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
@@ -476,7 +537,7 @@ class PGVectorStore(VectorStoreBase):
         results: List[VectorStoreResult] = []
         for row in rows:
             row_dict = row._asdict()
-            results.append(self._parse(row_dict))
+            results.append(self._parse_keysearch(row_dict))
         return results
 
     def delete(self, id: int) -> None:
@@ -502,7 +563,7 @@ class PGVectorStore(VectorStoreBase):
             row = session.execute(stmt).fetchone()
         if not row:
             return None
-        return self._parse(row._asdict())
+        return self._parse_search(row._asdict())
 
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         stmt = self._build_sql_list(filters, top_k)
@@ -689,7 +750,12 @@ class AsyncPGVectorStore(PGVectorStore):
             result = await session.execute(stmt)
             rows = result.fetchall()
 
-        return [self._parse(row._asdict()) for row in rows]
+        results: List[VectorStoreResult] = []
+        for row in rows:
+            row_dict = row._asdict()
+            results.append(self._parse_search(row_dict))
+
+        return results
 
     async def keyword_search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         stmt = self._build_sql_keyword_search(filters, query, top_k)
@@ -703,7 +769,11 @@ class AsyncPGVectorStore(PGVectorStore):
             logger.error(f"异步全文检索执行失败：\n{traceback.format_exc()}")
             return None
 
-        return [self._parse(row._asdict()) for row in rows]
+        results: List[VectorStoreResult] = []
+        for row in rows:
+            row_dict = row._asdict()
+            results.append(self._parse_keysearch(row_dict))
+        return results
 
 
     async def delete(self, id: int) -> None:

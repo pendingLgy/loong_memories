@@ -93,7 +93,7 @@ class MySQLDB(DBEngine):
 
         super().__init__(table_prefix=table_prefix)
 
-    def _start(self) -> Engine:
+    def start(self) -> Engine:
         "用离散参数构造 URL，驱动名按可用库选择。"
 
         if not _MYSQL_DRIVER:
@@ -251,7 +251,7 @@ class AsyncMySQLDB(AsyncDBEngine):
 
         super().__init__(table_prefix=table_prefix)
 
-    async def _start(self) -> AsyncEngine:
+    async def start(self) -> AsyncEngine:
         "用离散参数构造 URL，驱动名按可用库选择。"
         if not _ASYNC_MYSQL_DRIVER:
             raise OptionalDependencyError(
