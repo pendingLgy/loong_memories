@@ -22,7 +22,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from loong_memories.core.config_db import DBSettings
-from loong_memories.core.config_llm import EmbeddingSettings, LLMSettings
+from loong_memories.core.config_llm import EmbeddingSettings, LLMSettings, RerankSettings
 from loong_memories.core.config_vector import VectorSettings
 
 
@@ -75,17 +75,33 @@ CONFIG_EMBEDDING_JSON = _dumps(CONFIG_EMBEDDING)
 # 对应 LLMSettings；temperature 取值需在 0 到 2 之间。
 CONFIG_LLM = {
     'enable': True,
-    'provider': 'deepseek',
-    'model': 'deepseek-chat',
+    'provider': 'qwen',
+    'model': 'qwen3.7-flash',
     'temperature': 0.3,
     'max_tokens': 2048,
     'api_key': 'sk-test-llm',
-    'base_url': 'https://api.example.com/v1',
-    'timeout': 60.0,
+    'base_url': 'https://llm-aa9vce2460xvbj3o.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    'timeout': 60,
 }
 
 CONFIG_LLM_JSON = _dumps(CONFIG_LLM)
 
+
+# ---------- JSON 配置：rerank 分区 ----------
+
+# 对应 RerankSettings；temperature 取值需在 0 到 2 之间。
+CONFIG_RERANK = {
+    'enable': True,
+    'provider': 'qwen',
+    'model': 'qwen3.7-text-rerank',
+    'max_tokens': 2048,
+    'max_documents': 100,
+    'api_key': 'sk-test-llm',
+    'base_url': 'https://llm-aa9vce2460xvbj3o.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    'timeout': 60,
+}
+
+CONFIG_RERANK_JSON = _dumps(CONFIG_RERANK)
 
 # ---------- JSON 配置：db 分区 ----------
 
@@ -194,6 +210,7 @@ CONFIG_JSON_TEXT = _dumps(CONFIG_JSON_DICT)
 # 便于尽早发现测试数据与模型定义不一致。
 CONFIG_EMBEDDING_SETTINGS = EmbeddingSettings.model_validate_json(CONFIG_EMBEDDING_JSON)
 CONFIG_LLM_SETTINGS = LLMSettings.model_validate_json(CONFIG_LLM_JSON)
+CONFIG_RERANK_SETTINGS = RerankSettings.model_validate_json(CONFIG_RERANK_JSON)
 CONFIG_DB_SETTINGS = DBSettings.model_validate_json(CONFIG_DB_JSON)
 CONFIG_VECTOR_SETTINGS = VectorSettings.model_validate_json(CONFIG_VECTOR_JSON)
 

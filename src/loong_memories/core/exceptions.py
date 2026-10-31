@@ -41,6 +41,8 @@ class EmbeddingError(BaseError):
 class LLMError(BaseError):
     """大模型调用失败。"""
 
+class RerankError(BaseError):
+    """rerank大模型调用失败。"""
 
 class StorageError(BaseError):
     """存储读写失败。"""

@@ -35,7 +35,7 @@ class EmbeddingSettings(BaseModel):
     api_key: str = Field(default="")
     # 接口地址。留空时用 provider 默认地址，可指向自建网关或代理。
     base_url: str = Field(default="")
-    timeout: float = Field(default=0, gt=0)
+    timeout: float = Field(default=0, ge=0)
 
 
 class LLMSettings(BaseModel):
@@ -58,4 +58,29 @@ class LLMSettings(BaseModel):
     api_key: str = Field(default="")
     # 接口地址。留空时用 provider 默认地址，可指向自建网关或代理。
     base_url: str = Field(default="")
-    timeout: float = Field(default=0, gt=0)
+    timeout: float = Field(default=60, gt=0)
+
+
+class RerankSettings(BaseModel):
+    """大模型参数：provider 决定实现，其余为通用与实现专属配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # 是否启用该分区；为 False 时门面不初始化对应组件。
+    enable: bool = Field(default=False)
+
+    # provider 名对应大模型注册表中的键；内置 openai、qwen、deepseek，qwen 与 deepseek 兼容 OpenAI。
+    provider: str = Field(default="openai")
+    # 模型名。留空时用 provider 的默认模型，见各 provider 的 default_model。
+    model: str = Field(default="")
+    # 排序返回数量
+    top_k: int = Field(default=5, gt=0)
+    # 单次生成的最大 token 数，0 表示不显式传入（由服务端决定）。
+    max_tokens: int = Field(default=0, ge=0)
+    # 单词最大文档数
+    max_documents: int = Field(default=100, gt=0)
+    # API Key。留空时读取 provider 约定的环境变量，如 OPENAI_API_KEY、DASHSCOPE_API_KEY、DEEPSEEK_API_KEY。
+    api_key: str = Field(default="")
+    # 接口地址。留空时用 provider 默认地址，可指向自建网关或代理。
+    base_url: str = Field(default="")
+    timeout: int = Field(default=60, gt=0)
