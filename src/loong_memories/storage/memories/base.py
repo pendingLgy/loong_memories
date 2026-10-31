@@ -23,7 +23,6 @@
    IP 内积：score 即内积值（越大越相似）
 """
 
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -36,8 +35,6 @@ from loong_memories.storage.memories.registry_vector import register_vector_stor
 
 # 支持的向量度量类型。
 MetricType = Literal["COSINE", "L2", "IP"]
-
-GET_FILTER_REQUIRED_KEY = ['user_id', 'tenant_id']
 
 
 class VectorStoreResult(BaseModel):
@@ -101,34 +98,59 @@ class VectorStoreBase(ABC):
         """新建集合（PG 中即建表）。"""
 
     @abstractmethod
-    def insert(self, vectors: List[List[float]], payloads: List[Dict[str, Any]], ids: List[int] ) -> None:
+    def insert(self,
+               vectors: List[List[float]],
+               payloads: List[Dict[str, Any]],
+               ids: List[int]) -> None:
         """批量写入向量及其元数据；ids 缺省时由实现自行生成。"""
 
     @abstractmethod
-    def search(self, query: str, vectors: List[float], top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
+    def search(self,
+               query: str,
+               vectors: List[float],
+               tenant_id: int,
+               user_id: Optional[int] = None,
+               top_k: int = 5,
+               filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """按相似度检索，返回按 score 降序的结果。"""
 
     @abstractmethod
-    def delete(self, id: int) -> None:
+    def delete(self,
+               id: int,
+               tenant_id: int,
+               user_id: Optional[int] = None) -> None:
         """按 id 删除单条。"""
 
     @abstractmethod
-    def update(self, id: int, vector: Optional[List[float]] = None, payload: Optional[Dict[str, Any]] = None) -> None:
+    def update(self,
+               id: int,
+               tenant_id: int,
+               user_id: Optional[int] = None,
+               vector: Optional[List[float]] = None,
+               payload: Optional[Dict[str, Any]] = None) -> None:
         """按 id 更新向量与元数据（可只更新其一）。"""
 
     @abstractmethod
-    def get(self, id: int) -> Optional[VectorStoreResult]:
+    def get(self,
+            id: int,
+            tenant_id: int,
+            user_id: Optional[int] = None) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
 
     @abstractmethod
-    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
-        """按 id, filter 读取单条，不存在返回 None。"""
-
-    @abstractmethod
-    def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
+    def list(self,
+             tenant_id: int,
+             user_id: Optional[int] = None,
+             filter: Optional[Dict[str, Any]] = None,
+             top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容（外层列表按既有约定包裹一层）。"""
 
-    def keyword_search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
+    def keyword_search(self,
+                       query: str,
+                       tenant_id: int,
+                       user_id: Optional[int] = None,
+                       top_k: int = 5,
+                       filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """关键字（BM25 或全文）检索；不支持的实现返回 None。"""
         return None
 
@@ -143,7 +165,7 @@ class VectorStoreBase(ABC):
                 pass
         return None
 
-    def _build_metadata(self, payloads:Dict[str, Any]):
+    def _build_metadata(self, payloads: Dict[str, Any]):
         keys_to_remove = {"text", "text_lemma", "updated_at_tz", "created_at_tz"}
 
         metadata = {
@@ -152,3 +174,12 @@ class VectorStoreBase(ABC):
         }
 
         return metadata
+
+
+    def _build_search_tenant_filter(self, filter: dict[str, Any] | None, tenant_id: int, user_id: int | None):
+        if not filter:
+            filter = {}
+
+        filter['tenant_id'] = tenant_id
+        if user_id is not None:
+            filter['user_id'] = tenant_id

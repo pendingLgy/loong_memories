@@ -20,21 +20,19 @@
  稀疏向量由 BM25 函数按 text 自动生成，稠密检索与关键词检索共用同一集合。
 """
 
-
-
 from __future__ import annotations
 
 import json
 import logging
 import re
-from copy import copy
 from typing import Any, Dict, List, Optional
 
 from loong_memories.core.exceptions import OptionalDependencyError, StorageError
-from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult, GET_FILTER_REQUIRED_KEY
+from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult
 
 try:  # 可选依赖：模块仍可导入，缺库时仅在实例化时报错。
     from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType, MilvusClient
+
     _PYMILVUS_ERROR: Optional[Exception] = None
 except ImportError as exc:  # pragma: no cover
     CollectionSchema = DataType = FieldSchema = Function = FunctionType = MilvusClient = None  # type: ignore[assignment]
@@ -44,7 +42,6 @@ except ImportError as exc:  # pragma: no cover
 _SAFE_FILTER_KEY = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 # 文本字段最大长度（Milvus VARCHAR 上限）。
 _MAX_TEXT_LEN = 65535
-
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +64,15 @@ class MilvusVectorStore(VectorStoreBase):
     metric_type = "COSINE"
 
     def __init__(
-        self,
-        uri: str = 'http://localhost:19530',
-        token: str = "",
-        collection_name: str = "",
-        vector_size: int = 1024,
-        db_name: str = "",
-        user: str = "",
-        password: str = "",
-        timeout: Optional[float] = None,
+            self,
+            uri: str = 'http://localhost:19530',
+            token: str = "",
+            collection_name: str = "",
+            vector_size: int = 1024,
+            db_name: str = "",
+            user: str = "",
+            password: str = "",
+            timeout: Optional[float] = None,
     ) -> None:
 
         self.uri = uri
@@ -91,7 +88,8 @@ class MilvusVectorStore(VectorStoreBase):
     def start(self) -> MilvusVectorStore:
 
         if MilvusClient is None:
-            raise OptionalDependencyError("使用 Milvus 向量库需要 pymilvus>=2.5（含 Function 类型），请安装或升级 pymilvus") from _PYMILVUS_ERROR
+            raise OptionalDependencyError(
+                "使用 Milvus 向量库需要 pymilvus>=2.5（含 Function 类型），请安装或升级 pymilvus") from _PYMILVUS_ERROR
 
         try:
             self.client = MilvusClient(
@@ -129,7 +127,8 @@ class MilvusVectorStore(VectorStoreBase):
             FieldSchema(name="metadata", dtype=DataType.JSON),
             # text 由 Milvus 分析器自动分词，供 BM25 使用。
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=_MAX_TEXT_LEN),
-            FieldSchema(name="text_lemma", dtype=DataType.VARCHAR, max_length=_MAX_TEXT_LEN, enable_analyzer=True,analyzer_params=chinese_analyzer_params),
+            FieldSchema(name="text_lemma", dtype=DataType.VARCHAR, max_length=_MAX_TEXT_LEN, enable_analyzer=True,
+                        analyzer_params=chinese_analyzer_params),
             # sparse 由 BM25 函数按 text 自动生成，稠密检索与关键词检索共用该集合。
             FieldSchema(name="sparse", dtype=DataType.SPARSE_FLOAT_VECTOR),
             # 声明带时区的日期时间字段（使用 VARCHAR 存储 ISO 8601 字符串）
@@ -137,10 +136,11 @@ class MilvusVectorStore(VectorStoreBase):
             FieldSchema(name="created_at_tz", dtype=DataType.TIMESTAMPTZ, nullable=True),
         ]
         schema = CollectionSchema(fields, enable_dynamic_field=True)
-        schema.add_function(Function(name="text_lemma_bm25", input_field_names=["text_lemma"], output_field_names=["sparse"], function_type=FunctionType.BM25))
+        schema.add_function(
+            Function(name="text_lemma_bm25", input_field_names=["text_lemma"], output_field_names=["sparse"],
+                     function_type=FunctionType.BM25))
 
         return schema
-
 
     def _record(self, rid: int, vector: List[float], payload: Dict[str, Any]) -> Dict[str, Any]:
         """组装写入记录：text 优先取 text_lemmatized，回退 data 或 text。"""
@@ -165,36 +165,39 @@ class MilvusVectorStore(VectorStoreBase):
             "updated_at_tz": updated_at_tz,
         }
 
-
-    def _build_param_insert(self, ids: list[int], payloads: list[dict[str, Any]], vectors: list[list[float | int]]) -> list[dict[str, Any]]:
+    def _build_param_insert(self,
+                            ids: list[int],
+                            payloads: list[dict[str, Any]],
+                            vectors: list[list[float | int]]) -> list[dict[str, Any]]:
         data = [self._record(rid, vector, payload) for rid, vector, payload in zip(ids, vectors, payloads)]
         return data
 
-    def _build_param_search(self, filters: dict[str, Any] | None, top_k: int,
+    def _build_param_search(self, filter: dict[str, Any] | None, top_k: int,
                             vectors: list[float | int]) -> dict[str, Any]:
         kwargs: Dict[str, Any] = {
             "collection_name": self.collection_name,
             "data": [vectors],
             "anns_field": "vectors",
             "limit": top_k,
-            "filter": self._create_filter(filters),
+            "filter": self._create_filter(filter),
             "output_fields": ["*"],
         }
         return kwargs
 
-
-    def _create_filter(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _create_filter(self, filter: Optional[Dict[str, Any]]) -> Optional[str]:
         """把等值过滤字典翻译为 Milvus 表达式。"""
-        if not filters:
+        if not filter:
             return None
         operands: List[str] = []
-        for key, value in filters.items():
+        for key, value in filter.items():
             if not _SAFE_FILTER_KEY.match(key):
                 raise StorageError("非法过滤键：" + str(key))
             if value == "*":
                 continue
 
-            if key == 'tenant_id' and isinstance(value, int):
+            if key == 'id' and isinstance(value, int):
+                operands.append("id == " + str(value))
+            elif key == 'tenant_id' and isinstance(value, int):
                 operands.append("tenant_id == " + str(value))
             elif key == 'user_id' and isinstance(value, int):
                 operands.append("user_id == " + str(value))
@@ -229,6 +232,19 @@ class MilvusVectorStore(VectorStoreBase):
             results.append(store)
         return results
 
+
+    def _build_id_filter(self, id: int, tenant_id: int, user_id: int | None) -> dict[str, int]:
+        """构建id多条件filter"""
+        filter = {
+            "id": id,
+            "tenant_id": tenant_id,
+        }
+
+        if user_id is not None:
+            filter["user_id"] = user_id
+
+        return self._create_filter(filter)
+
     def create_col(self, name: str, vector_size: int, distance: MetricType = "COSINE") -> None:
         """集合不存在时按单一 schema 创建；已存在则直接复用。"""
         if self.client.has_collection(name):
@@ -238,8 +254,10 @@ class MilvusVectorStore(VectorStoreBase):
         logger.info(f"create vector table {name}")
 
         index_params = self.client.prepare_index_params()
-        index_params.add_index(field_name="vectors", metric_type=distance, index_type="AUTOINDEX", index_name="vector_index")
-        index_params.add_index(field_name="sparse", index_type="SPARSE_INVERTED_INDEX", metric_type="BM25", index_name="sparse_index")
+        index_params.add_index(field_name="vectors", metric_type=distance, index_type="AUTOINDEX",
+                               index_name="vector_index")
+        index_params.add_index(field_name="sparse", index_type="SPARSE_INVERTED_INDEX", metric_type="BM25",
+                               index_name="sparse_index")
         self.client.create_collection(collection_name=name, schema=self._schema(vector_size), index_params=index_params)
 
     def _query_parse(self, rows: List[Dict[str, Any]]) -> List[VectorStoreResult]:
@@ -249,7 +267,10 @@ class MilvusVectorStore(VectorStoreBase):
             results.append(store)
         return results
 
-    def insert(self, vectors: List[List[float]], payloads: List[Dict[str, Any]], ids: List[int]) -> None:
+    def insert(self,
+               vectors: List[List[float]],
+               payloads: List[Dict[str, Any]],
+               ids: List[int]) -> None:
         """批量写入"""
         data = self._build_param_insert(ids, payloads, vectors)
         try:
@@ -257,15 +278,30 @@ class MilvusVectorStore(VectorStoreBase):
         except Exception as exc:
             raise StorageError("Milvus 写入失败：" + str(exc)) from exc
 
-
-    def delete(self, id: int) -> None:
+    def delete(self,
+               id: int,
+               tenant_id: int,
+               user_id: Optional[int] = None) -> None:
         """按 id 删除单条。"""
-        self.client.delete(collection_name=self.collection_name, ids=[id])
+        exits = self.get(id,tenant_id,user_id)
+        if exits is None:
+            return
+        filter = self._build_id_filter(id, tenant_id, user_id)
 
-    def update(self, id: int, vector: Optional[List[float]] = None, payload: Optional[Dict[str, Any]] = None) -> None:
+        self.client.delete(collection_name=self.collection_name, filter=filter)
+
+    def update(self,
+               id: int,
+               tenant_id: int,
+               user_id: Optional[int] = None,
+               vector: Optional[List[float]] = None,
+               payload: Optional[Dict[str, Any]] = None) -> None:
         """按 id 更新；缺省字段沿用已有记录。"""
         if vector is None or payload is None:
-            existing = self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
+
+            filter = self._build_id_filter(id, tenant_id, user_id)
+
+            existing = self.client.query(consistency_level="Strong", collection_name=self.collection_name, filter=filter)
             if not existing:
                 raise StorageError("待更新的向量不存在：" + str(id))
             if vector is None:
@@ -274,46 +310,50 @@ class MilvusVectorStore(VectorStoreBase):
                 payload = existing[0].get("metadata")
         self.client.upsert(collection_name=self.collection_name, data=self._record(id, vector, payload))
 
-    def get(self, id: int) -> Optional[VectorStoreResult]:
+
+
+    def get(self,
+            id: int,
+            tenant_id: int,
+            user_id: Optional[int] = None) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        result = self.client.get(consistency_level="Strong",collection_name=self.collection_name, ids=id)
+
+        filter = self._build_id_filter(id, tenant_id, user_id)
+        result = self.client.query(consistency_level="Strong", collection_name=self.collection_name, filter=filter, limit=1)
         if not result:
             return None
         item = result[0]
         return VectorStoreResult.to_vector_store_result(**item)
 
 
-    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
-        """按 id, filter 读取单条，不存在返回 None。"""
-
-        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
-        if is_all_exist is False:
-            raise StorageError("请求参数错误：" + str(filters))
-
-        result = self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
-        if not result:
-            return None
-
-        item = result[0]
-
-        is_all_equal = all(item.get(k) == filters.get(k) for k in GET_FILTER_REQUIRED_KEY)
-        if is_all_equal is False:
-           return None
-
-        return VectorStoreResult.to_vector_store_result(**item)
-
-    def search(self, query: str, vectors: List[float], top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
+    def search(self,
+               query: str,
+               vectors: List[float],
+               tenant_id: int,
+               user_id: Optional[int] = None,
+               top_k: int = 5,
+               filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
-        kwargs = self._build_param_search(filters, top_k, vectors)
+
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
+
+        kwargs = self._build_param_search(filter, top_k, vectors)
         try:
-            hits = self.client.search(consistency_level="Strong",**kwargs)
+            hits = self.client.search(consistency_level="Strong", **kwargs)
         except Exception as exc:
             raise StorageError("Milvus 检索失败：" + str(exc)) from exc
         return self._parse(hits[0] if hits else [])
 
-
-    def keyword_search(self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
+    def keyword_search(self,
+                       query: str,
+                       tenant_id: int,
+                       user_id: Optional[int] = None,
+                       top_k: int = 5,
+                       filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入。"""
+
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
+
         try:
             hits = self.client.search(
                 consistency_level="Strong",
@@ -321,20 +361,26 @@ class MilvusVectorStore(VectorStoreBase):
                 data=[query],
                 anns_field="sparse",
                 limit=top_k,
-                filter=self._create_filter(filters),
+                filter=self._create_filter(filter),
                 output_fields=["*"],
             )
         except Exception:
             return None
         return self._parse(hits[0] if hits else [])
 
-
-    def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
+    def list(self,
+             tenant_id: int,
+             user_id: Optional[int] = None,
+             filter: Optional[Dict[str, Any]] = None,
+             top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
+
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
+
         rows = self.client.query(
             consistency_level="Strong",
             collection_name=self.collection_name,
-            filter=self._create_filter(filters),
+            filter=self._create_filter(filter),
             limit=top_k or 100,
             output_fields=["*"],
         )
@@ -343,8 +389,10 @@ class MilvusVectorStore(VectorStoreBase):
         return results
 
 
+
 try:  # 可选依赖：异步客户端自 pymilvus 2.5 起提供，缺失时仅异步实现不可用。
     from pymilvus import AsyncMilvusClient
+
     _ASYNC_PYMILVUS_ERROR: Optional[Exception] = None
 except ImportError as exc:  # pragma: no cover
     AsyncMilvusClient = None  # type: ignore[assignment]
@@ -361,7 +409,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
     metric_type = "COSINE"
 
     def __init__(
-        self,
+            self,
             uri: str = 'http://localhost:19530',
             token: str = "",
             collection_name: str = "",
@@ -420,24 +468,37 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
             collection_name=name, schema=self._schema(vector_size), index_params=index_params
         )
 
-    async def insert(self, vectors: List[List[float]], payloads: List[Dict[str, Any]], ids: List[int]) -> None:
+    async def insert(self,
+                     vectors: List[List[float]],
+                     payloads: List[Dict[str, Any]],
+                     ids: List[int]) -> None:
         """批量写入：记录组装复用同步版。"""
-        data = self._build_param_insert(ids,payloads, vectors)
+        data = self._build_param_insert(ids, payloads, vectors)
         try:
             await self.client.insert(collection_name=self.collection_name, data=data)
         except Exception as exc:
             raise StorageError('Milvus 异步写入失败：' + str(exc)) from exc
 
-    async def delete(self, id: int) -> None:
+    async def delete(self,
+                     id: int,
+                     tenant_id: int,
+                     user_id: Optional[int] = None) -> None:
         """按 id 删除单条。"""
-        await self.client.delete(collection_name=self.collection_name, ids=[id])
+        filter = self._build_id_filter(id,tenant_id, user_id)
+        await self.client.delete(collection_name=self.collection_name, filter=filter)
 
-    async def update(
-        self, id: int, vector: Optional[List[float]] = None, payload: Optional[Dict[str, Any]] = None
-    ) -> None:
+    async def update(self,
+                     id: int,
+                     tenant_id: int,
+                     user_id: Optional[int] = None,
+                     vector: Optional[List[float]] = None,
+                     payload: Optional[Dict[str, Any]] = None) -> None:
         """按 id 更新；缺省字段沿用已有记录。"""
+
+        filter = self._build_id_filter(id, tenant_id, user_id)
+
         if vector is None or payload is None:
-            existing = await self.client.get(consistency_level="Strong",collection_name=self.collection_name, ids=id)
+            existing = await self.client.query(consistency_level="Strong", collection_name=self.collection_name, filter=filter)
             if not existing:
                 raise StorageError('待更新的向量不存在：' + str(id))
             if vector is None:
@@ -446,47 +507,44 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
                 payload = existing[0].get('metadata')
         await self.client.upsert(collection_name=self.collection_name, data=self._record(id, vector, payload))
 
-    async def get(self, id: int) -> Optional[VectorStoreResult]:
+    async def get(self,
+                  id: int,
+                  tenant_id: int,
+                  user_id: Optional[int] = None) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        result = await self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
+
+        filter = self._build_id_filter(id, tenant_id, user_id)
+        result = await self.client.query(consistency_level="Strong", collection_name=self.collection_name, filter=filter)
         if not result:
             return None
         return VectorStoreResult.to_vector_store_result(**result[0])
 
-    async def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
-        """按 id, filter 读取单条，不存在返回 None。"""
 
-        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
-        if is_all_exist is False:
-            raise StorageError("请求参数错误：" + str(filters))
-
-        result = await self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
-        if not result:
-            return None
-
-        item = result[0]
-
-        is_all_equal = all(item.get(k) == filters.get(k) for k in GET_FILTER_REQUIRED_KEY)
-        if is_all_equal is False:
-           return None
-
-        return VectorStoreResult.to_vector_store_result(**item)
-
-    async def search(
-        self, query: str, vectors: List[float], top_k: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> Optional[List[VectorStoreResult]]:
+    async def search(self,
+                     query: str,
+                     vectors: List[float],
+                     tenant_id: int,
+                     user_id: Optional[int] = None,
+                     top_k: int = 5,
+                     filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
-        kwargs = self._build_param_search(filters, top_k, vectors)
+
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        kwargs = self._build_param_search(filter, top_k, vectors)
         try:
-            hits = await self.client.search(consistency_level="Strong",**kwargs)
+            hits = await self.client.search(consistency_level="Strong", **kwargs)
         except Exception as exc:
             raise StorageError('Milvus 异步检索失败：' + str(exc)) from exc
         return self._parse(hits[0] if hits else [])
 
-    async def keyword_search(
-        self, query: str, top_k: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> Optional[List[VectorStoreResult]]:
+    async def keyword_search(self,
+                             query: str,
+                             tenant_id: int,
+                             user_id: Optional[int] = None,
+                             top_k: int = 5,
+                             filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入；失败返回 None，与同步实现一致。"""
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
         try:
             hits = await self.client.search(
                 consistency_level="Strong",
@@ -494,23 +552,25 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
                 data=[query],
                 anns_field='sparse',
                 limit=top_k,
-                filter=self._create_filter(filters),
+                filter=self._create_filter(filter),
                 output_fields=['*'],
             )
         except Exception:
             return None
         return self._parse(hits[0] if hits else [])
 
-    async def list(
-        self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None
-    ) -> Optional[List[VectorStoreResult]]:
+    async def list(self,
+                   tenant_id: int,
+                   user_id: Optional[int] = None,
+                   filter: Optional[Dict[str, Any]] = None,
+                   top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
+        self._build_search_tenant_filter(filter, tenant_id, user_id)
         rows = await self.client.query(
             consistency_level="Strong",
             collection_name=self.collection_name,
-            filter=self._create_filter(filters),
+            filter=self._create_filter(filter),
             limit=top_k or 100,
             output_fields=['*'],
         )
         return self._query_parse(rows or [])
-

@@ -103,6 +103,8 @@ class VectorEngine:
 
     def insert(
         self,
+        tenant_id: int,
+        user_id: int,
         vectors: List[List[float]],
         payloads: Optional[List[Dict[str, Any]]] = None,
         ids: Optional[List[int]] = None, # 修正为 int
@@ -119,6 +121,8 @@ class VectorEngine:
     def update(
         self,
         vector_id: int,
+        tenant_id: int,
+        user_id: int,
         vector: Optional[List[float]] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -169,6 +173,10 @@ class VectorEngine:
     def get(self, vector_id: int) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
         return self._store.get(vector_id)
+
+    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+        return self._store.get_by_filter(id,filters)
 
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
         return self._store.list(filters=filters, top_k=top_k) or []
@@ -300,6 +308,11 @@ class AsyncVectorEngine(VectorEngine):
     async def get(self, vector_id: int) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
         return await self._store.get(vector_id)
+
+
+    async def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+        return await self._store.get_by_filter(id, filters)
 
 
     async def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
