@@ -46,12 +46,7 @@ try:
 except ImportError as _exc:
     pytest.skip(f'[SKIP INFO] File {__file__}， 缺少 {str(_exc)}', allow_module_level=True)
 
-HAS_ASYNC_CLIENT = AsyncMilvusClient is not None
 
-needs_async_client = pytest.mark.skipif(
-    not HAS_ASYNC_CLIENT,
-    reason='异步 Milvus 用例需要 pymilvus>=2.5 提供的 AsyncMilvusClient'
-)
 
 pytestmark = pytest.mark.integration
 
@@ -73,11 +68,11 @@ def _vector(seed, dim):
     return vector
 
 
-def _payload(tenant_id, text, text_lemma=None):
+def _payload(tenant_id, user_id, text, text_lemma=None):
     '''组装一条写入用的 payload，作用域标识与文本字段齐备。'''
     return {
         'tenant_id': tenant_id,
-        'user_id': _random_id(),
+        'user_id': user_id,
         'text': text,
         'text_lemma': text_lemma or text,
         'created_at_tz': '2024-01-01T00:00:00+00:00',
@@ -146,7 +141,6 @@ class TestMilvusVectorStore:
             store.start()
 
 
-@needs_async_client
 class TestAsyncMilvusVectorStore:
     '''AsyncMilvusVectorStore 的公共契约：backend 登记与构造参数。'''
 
@@ -222,8 +216,8 @@ class TestMilvusVectorStoreIntegration:
         assert milvus_store.client.has_collection(vector_settings.collection) is True
 
     def test_insert_then_get_returns_record(self, milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'hello')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'hello')], [rid])
         got = milvus_store.get(rid)
         assert got is not None
         assert (got.id, got.tenant_id, got.text) == (rid, tenant_id, 'hello')
@@ -232,18 +226,18 @@ class TestMilvusVectorStoreIntegration:
         assert milvus_store.get(_random_id()) is None
 
     def test_insert_persists_text_lemma(self, milvus_store, vector_settings):
-        rid = _random_id()
-        payload = _payload(_random_id(), '原文', '词形')
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        payload = _payload(_random_id(),user_id, '原文', '词形')
         milvus_store.insert([_vector(1, vector_settings.vector_size)], [payload], [rid])
         got = milvus_store.get(rid)
         assert (got.text, got.text_lemma) == ('原文', '词形')
 
     def test_search_returns_hits_desc_by_score(self, milvus_store, vector_settings):
-        tenant_id = _random_id()
+        tenant_id, user_id = _random_id(), _random_id()
         dim = vector_settings.vector_size
         ids = [_random_id() for _ in range(3)]
         milvus_store.insert([_vector(1, dim), _vector(2, dim), _vector(3, dim)],
-                            [_payload(tenant_id, 'm' + str(index)) for index in range(3)], ids)
+                            [_payload(tenant_id, user_id,  'm' + str(index)) for index in range(3)], ids)
         hits = milvus_store.search('m0', _vector(1, dim), top_k=3, filters={'tenant_id': tenant_id})
         assert len(hits) == 3
         assert sorted([hit.id for hit in hits]) == sorted(ids)
@@ -251,18 +245,20 @@ class TestMilvusVectorStoreIntegration:
         assert scores == sorted(scores, reverse=True)
 
     def test_search_respects_top_k(self, milvus_store, vector_settings):
-        tenant_id = _random_id()
+        tenant_id, user_id = _random_id(), _random_id()
         dim = vector_settings.vector_size
         milvus_store.insert([_vector(1, dim) for _ in range(3)],
-                            [_payload(tenant_id, 'top' + str(index)) for index in range(3)],
+                            [_payload(tenant_id, user_id, 'top' + str(index)) for index in range(3)],
                             [_random_id() for _ in range(3)])
         assert len(milvus_store.search('top', _vector(1, dim), top_k=2, filters={'tenant_id': tenant_id})) == 2
 
     def test_search_filters_by_tenant(self, milvus_store, vector_settings):
         first, second = _random_id(), _random_id()
+        user_id = _random_id()
+
         dim = vector_settings.vector_size
         milvus_store.insert([_vector(1, dim), _vector(1, dim)],
-                            [_payload(first, 'a'), _payload(second, 'b')],
+                            [_payload(first, user_id, 'a'), _payload(second, user_id, 'b')],
                             [_random_id(), _random_id()])
         hits = milvus_store.search('a', _vector(1, dim), top_k=10, filters={'tenant_id': first})
         assert [hit.text for hit in hits] == ['a']
@@ -270,10 +266,10 @@ class TestMilvusVectorStoreIntegration:
 
 
     def test_keyword_search_matches_text_lemma(self, milvus_store, vector_settings):
-        tenant_id = _random_id()
-        rid = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
         milvus_store.insert([_vector(1, vector_settings.vector_size)],
-                            [_payload(tenant_id, 'Milvus 是向量库', 'milvus vector database')], [rid])
+                            [_payload(tenant_id, user_id, 'Milvus 是向量库', 'milvus vector database')], [rid])
         hits = milvus_store.keyword_search('milvus', top_k=5, filters={'tenant_id': tenant_id})
         assert hits is not None
         assert [hit.id for hit in hits] == [rid]
@@ -282,16 +278,16 @@ class TestMilvusVectorStoreIntegration:
         assert milvus_store.keyword_search('x', top_k=1, filters={'bad key': 1}) is None
 
     def test_update_vector_and_payload(self, milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'before')], [rid])
-        milvus_store.update(rid, vector=_vector(5, vector_settings.vector_size), payload=_payload(tenant_id, 'after'))
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'before')], [rid])
+        milvus_store.update(rid, vector=_vector(5, vector_settings.vector_size), payload=_payload(tenant_id, user_id, 'after'))
         got = milvus_store.get(rid)
         assert got.text == 'after'
 
     def test_update_keeps_existing_vector_when_omitted(self, milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        milvus_store.insert([_vector(2, vector_settings.vector_size)], [_payload(tenant_id, 'keep')], [rid])
-        milvus_store.update(rid, payload=_payload(tenant_id, 'kept'))
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        milvus_store.insert([_vector(2, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'keep')], [rid])
+        milvus_store.update(rid, payload=_payload(tenant_id, user_id,'kept'))
         got = milvus_store.get(rid)
         assert got is not None and got.text == 'kept'
 
@@ -300,21 +296,22 @@ class TestMilvusVectorStoreIntegration:
             milvus_store.update(_random_id(), payload={'tenant_id': _random_id()})
 
     def test_delete_removes_record(self, milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'gone')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'gone')], [rid])
         milvus_store.delete(rid)
         assert milvus_store.get(rid) is None
 
     def test_list_respects_top_k(self, milvus_store, vector_settings):
         tenant_id = _random_id()
+        user_id = _random_id()
         milvus_store.insert([_vector(1, vector_settings.vector_size) for _ in range(3)],
-                            [_payload(tenant_id, 'l' + str(index)) for index in range(3)],
+                            [_payload(tenant_id, user_id,  'l' + str(index)) for index in range(3)],
                             [_random_id() for _ in range(3)])
         assert len(milvus_store.list(filters={'tenant_id': tenant_id}, top_k=2)) == 2
 
     def test_list_applies_filters(self, milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'only')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'only')], [rid])
         listed = milvus_store.list(filters={'tenant_id': tenant_id})
         assert [item.id for item in listed] == [rid]
 
@@ -322,10 +319,31 @@ class TestMilvusVectorStoreIntegration:
         with pytest.raises(StorageError):
             milvus_store.list(filters={'bad key': 1})
 
+    def test_get_by_filter(self, milvus_store, vector_settings):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        none_data = milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id,'user_id':700})
+        assert none_data is None
+
+        data = milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id, 'user_id': user_id})
+        assert data is not None
+        assert data.id == rid
+
+    def test_get_by_filter_illegal_filter_key(self, milvus_store, vector_settings):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        with pytest.raises(StorageError):
+            milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id})
+
+        with pytest.raises(StorageError):
+            milvus_store.get_by_filter(rid, filters={'user_id': user_id})
 
 # ---------- 真实服务：AsyncMilvusVectorStore ----------
 
-@needs_async_client
 @pytest.mark.asyncio(loop_scope='module')
 class TestAsyncMilvusVectorStoreIntegration:
     '''AsyncMilvusVectorStore 在真实 Milvus 上的公共方法行为，语义与同步版本一致。'''
@@ -355,8 +373,8 @@ class TestAsyncMilvusVectorStoreIntegration:
         assert await async_milvus_store.create_col(vector_settings.collection, vector_settings.vector_size) is None
 
     async def test_insert_then_get_returns_record(self, async_milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'hello')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id,'hello')], [rid])
         got = await async_milvus_store.get(rid)
         assert got is not None
         assert (got.id, got.text) == (rid, 'hello')
@@ -366,18 +384,19 @@ class TestAsyncMilvusVectorStoreIntegration:
 
     async def test_search_returns_hits_desc_by_score(self, async_milvus_store, vector_settings):
         tenant_id = _random_id()
+        user_id = _random_id()
         dim, ids = vector_settings.vector_size, [_random_id() for _ in range(3)]
         await async_milvus_store.insert([_vector(1, dim), _vector(2, dim), _vector(3, dim)],
-                                       [_payload(tenant_id, 'm' + str(index)) for index in range(3)], ids)
+                                       [_payload(tenant_id, user_id, 'm' + str(index)) for index in range(3)], ids)
         hits = await async_milvus_store.search('m0', _vector(1, dim), top_k=3, filters={'tenant_id': tenant_id})
         assert sorted([hit.id for hit in hits]) == sorted(ids)
         scores = [hit.score for hit in hits]
         assert scores == sorted(scores, reverse=True)
 
     async def test_keyword_search_matches_text_lemma(self, async_milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         await async_milvus_store.insert([_vector(1, vector_settings.vector_size)],
-                                       [_payload(tenant_id, 'Milvus 是向量库', 'milvus vector database')], [rid])
+                                       [_payload(tenant_id, user_id, 'Milvus 是向量库', 'milvus vector database')], [rid])
         hits = await async_milvus_store.keyword_search('milvus', top_k=5, filters={'tenant_id': tenant_id})
         assert hits is not None and hits[0].id == rid
 
@@ -385,9 +404,9 @@ class TestAsyncMilvusVectorStoreIntegration:
         assert await async_milvus_store.keyword_search('x', top_k=1, filters={'bad key': 1}) is None
 
     async def test_update_changes_payload(self, async_milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'before')], [rid])
-        await async_milvus_store.update(rid, payload=_payload(tenant_id, 'after'))
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'before')], [rid])
+        await async_milvus_store.update(rid, payload=_payload(tenant_id, user_id, 'after'))
         got = await async_milvus_store.get(rid)
         assert got.text == 'after'
 
@@ -396,13 +415,40 @@ class TestAsyncMilvusVectorStoreIntegration:
             await async_milvus_store.update(_random_id(), payload={'tenant_id': _random_id()})
 
     async def test_delete_removes_record(self, async_milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'gone')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'gone')], [rid])
         await async_milvus_store.delete(rid)
         assert await async_milvus_store.get(rid) is None
 
     async def test_list_applies_filters(self, async_milvus_store, vector_settings):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, 'only')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)], [_payload(tenant_id, user_id, 'only')], [rid])
         listed = await async_milvus_store.list(filters={'tenant_id': tenant_id})
         assert rid in [item.id for item in listed]
+
+
+    async def test_get_by_filter(self, async_milvus_store, vector_settings):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)],
+                            [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        none_data = await async_milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id, 'user_id': 700})
+        assert none_data is None
+
+        data = await async_milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id, 'user_id': user_id})
+        assert data is not None
+        assert data.id == rid
+
+
+    async def test_get_by_filter_illegal_filter_key(self, async_milvus_store, vector_settings):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        await async_milvus_store.insert([_vector(1, vector_settings.vector_size)],
+                            [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        with pytest.raises(StorageError):
+            await async_milvus_store.get_by_filter(rid, filters={'tenant_id': tenant_id})
+
+        with pytest.raises(StorageError):
+            await async_milvus_store.get_by_filter(rid, filters={'user_id': user_id})

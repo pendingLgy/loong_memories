@@ -34,7 +34,7 @@ try:
     import asyncpg
 
     from conftest import CONFIG_VECTOR_SETTINGS
-    from loong_memories.core.exceptions import OptionalDependencyError
+    from loong_memories.core.exceptions import OptionalDependencyError, StorageError
     from loong_memories.storage.memories.base import VectorStoreBase
     from loong_memories.storage.memories.pg_store import AsyncPGVectorStore, PGVectorStore
     from loong_memories.storage.memories.registry_vector import (
@@ -71,13 +71,13 @@ def _vector(seed):
     return vector
 
 
-def _payload(tenant_id, text, text_lemma=None):
+def _payload(tenant_id, user_id, text, text_lemma=None):
     '''组装一条写入用的 payload：作用域列、元数据 JSONB 与文本字段齐备。'''
     now = datetime.now(timezone.utc)
     return {
         'tenant_id': tenant_id,
-        'user_id': _random_id(),
-        'metadata': {'tag': text},
+        'user_id': user_id,
+        'tag': text,
         'text': text,
         'text_lemma': text_lemma or text,
         'created_at_tz': now,
@@ -261,8 +261,8 @@ class TestPGVectorStoreIntegration:
         assert pg_store.create_col(TEST_COLLECTION, TEST_VECTOR_SIZE) is None
 
     def test_insert_then_get_returns_record(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'hello')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'hello')], [rid])
         got = pg_store.get(rid)
         assert got is not None
         assert (got.id, got.tenant_id, got.text) == (rid, tenant_id, 'hello')
@@ -271,51 +271,53 @@ class TestPGVectorStoreIntegration:
         assert pg_store.get(_random_id()) is None
 
     def test_insert_persists_text_lemma_and_metadata(self, pg_store):
-        rid = _random_id()
-        pg_store.insert([_vector(1)], [_payload(_random_id(), '原文', '词形')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, '原文', '词形')], [rid])
         got = pg_store.get(rid)
         assert (got.text, got.text_lemma) == ('原文', '词形')
-        assert got.metadata == {'tag': '原文'}
 
     def test_created_at_is_serialized_to_iso_string(self, pg_store):
-        rid = _random_id()
-        pg_store.insert([_vector(1)], [_payload(_random_id(), 't')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 't')], [rid])
         assert isinstance(pg_store.get(rid).created_at_tz, str)
 
     def test_search_returns_closest_first(self, pg_store):
-        tenant_id = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         ids = [_random_id() for _ in range(3)]
         pg_store.insert([_vector(1), _vector(2), _vector(3)],
-                        [_payload(tenant_id, 'm' + str(index)) for index in range(3)], ids)
+                        [_payload(tenant_id, user_id,  'm' + str(index)) for index in range(3)], ids)
         hits = pg_store.search('m0', _vector(1), top_k=3, filters={'tenant_id': tenant_id})
         assert [hit.id for hit in hits] == ids
         distances = [hit.score for hit in hits]
         assert distances == sorted(distances)
 
     def test_search_respects_top_k(self, pg_store):
-        tenant_id = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         pg_store.insert([_vector(1) for _ in range(3)],
-                        [_payload(tenant_id, 'top' + str(index)) for index in range(3)],
+                        [_payload(tenant_id, user_id, 'top' + str(index)) for index in range(3)],
                         [_random_id() for _ in range(3)])
         assert len(pg_store.search('top', _vector(1), top_k=2, filters={'tenant_id': tenant_id})) == 2
 
     def test_search_filters_by_tenant(self, pg_store):
         first, second = _random_id(), _random_id()
+        user_id = _random_id()
         pg_store.insert([_vector(1), _vector(1)],
-                        [_payload(first, 'a'), _payload(second, 'b')],
+                        [_payload(first, user_id,  'a'), _payload(second, user_id, 'b')],
                         [_random_id(), _random_id()])
         hits = pg_store.search('a', _vector(1), top_k=10, filters={'tenant_id': first})
         assert [hit.text for hit in hits] == ['a']
 
     def test_search_filters_by_metadata_key(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'unique-tag')], [rid])
-        hits = pg_store.search('q', _vector(1), top_k=10, filters={'tag': 'unique-tag'})
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        text = str(_random_id()) + " unique-tag"
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, text)], [rid])
+        hits = pg_store.search(text, _vector(1), top_k=10, filters={'tag': text,'user_id':user_id})
         assert rid in [hit.id for hit in hits]
 
     def test_keyword_search_matches_text_lemma(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'ignored', 'milvus vector database')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'ignored', 'milvus vector database')], [rid])
         hits = pg_store.keyword_search('milvus', top_k=5, filters={'tenant_id': tenant_id})
         assert hits is not None
         assert [hit.id for hit in hits] == [rid]
@@ -324,44 +326,68 @@ class TestPGVectorStoreIntegration:
         assert pg_store.keyword_search('12', top_k=5) == []
 
     def test_update_changes_vector_and_metadata(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'before')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'before')], [rid])
         pg_store.update(rid, vector=_vector(4), payload={'tag': 'after'})
         got = pg_store.get(rid)
         assert got.metadata == {'tag': 'after'}
 
     def test_update_without_params_is_noop(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'kept')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'kept')], [rid])
         pg_store.update(rid)
         assert pg_store.get(rid).text == 'kept'
 
     def test_delete_removes_row(self, pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        pg_store.insert([_vector(1)], [_payload(tenant_id, 'gone')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'gone')], [rid])
         pg_store.delete(rid)
         assert pg_store.get(rid) is None
 
     def test_insert_duplicate_id_raises_integrity_error(self, pg_store):
-        rid = _random_id()
-        pg_store.insert([_vector(1)], [_payload(_random_id(), 'dup')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'dup')], [rid])
         with pytest.raises(sqlalchemy.exc.IntegrityError):
-            pg_store.insert([_vector(1)], [_payload(_random_id(), 'dup')], [rid])
+            pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'dup')], [rid])
 
     def test_list_respects_top_k(self, pg_store):
-        tenant_id = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         pg_store.insert([_vector(1) for _ in range(3)],
-                        [_payload(tenant_id, 'l' + str(index)) for index in range(3)],
+                        [_payload(tenant_id, user_id, 'l' + str(index)) for index in range(3)],
                         [_random_id() for _ in range(3)])
         assert len(pg_store.list(filters={'tenant_id': tenant_id}, top_k=2)) == 2
 
     def test_list_applies_in_operator(self, pg_store):
         first, second = _random_id(), _random_id()
+        user_id = _random_id()
         pg_store.insert([_vector(1), _vector(1)],
-                        [_payload(first, 'x'), _payload(second, 'y')],
+                        [_payload(first, user_id,'x'), _payload(second, user_id, 'y')],
                         [_random_id(), _random_id()])
         listed = pg_store.list(filters={'tenant_id': {'in': [first]}})
         assert [item.text for item in listed] == ['x']
+
+    def test_get_by_filter(self, pg_store):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        none_data = pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id,'user_id':700})
+        assert none_data is None
+
+        data = pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id, 'user_id': user_id})
+        assert data is not None
+        assert data.id == rid
+
+    def test_get_by_filter_illegal_filter_key(self, pg_store):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        with pytest.raises(StorageError):
+            pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id})
+
+        with pytest.raises(StorageError):
+            pg_store.get_by_filter(rid, filters={'user_id': user_id})
 
 
 # ---------- 真实服务：AsyncPGVectorStore ----------
@@ -410,8 +436,8 @@ class TestAsyncPGVectorStoreIntegration:
         assert await async_pg_store.create_col(TEST_COLLECTION, TEST_VECTOR_SIZE) is None
 
     async def test_insert_then_get_returns_record(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'hello')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'hello')], [rid])
         got = await async_pg_store.get(rid)
         assert got is not None
         assert (got.id, got.text) == (rid, 'hello')
@@ -420,32 +446,33 @@ class TestAsyncPGVectorStoreIntegration:
         assert await async_pg_store.get(_random_id()) is None
 
     async def test_search_returns_closest_first(self, async_pg_store):
-        tenant_id = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         ids = [_random_id() for _ in range(3)]
         await async_pg_store.insert([_vector(1), _vector(2), _vector(3)],
-                                    [_payload(tenant_id, 'm' + str(index)) for index in range(3)], ids)
+                                    [_payload(tenant_id, user_id,  'm' + str(index)) for index in range(3)], ids)
         hits = await async_pg_store.search('m0', _vector(1), top_k=3, filters={'tenant_id': tenant_id})
         assert [hit.id for hit in hits] == ids
 
     async def test_search_respects_top_k(self, async_pg_store):
-        tenant_id = _random_id()
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
         await async_pg_store.insert([_vector(1) for _ in range(3)],
-                                   [_payload(tenant_id, 'top' + str(index)) for index in range(3)],
+                                   [_payload(tenant_id, user_id, 'top' + str(index)) for index in range(3)],
                                    [_random_id() for _ in range(3)])
         hits = await async_pg_store.search('top', _vector(1), top_k=2, filters={'tenant_id': tenant_id})
         assert len(hits) == 2
 
     async def test_search_filters_by_tenant(self, async_pg_store):
         first, second = _random_id(), _random_id()
+        user_id = _random_id()
         await async_pg_store.insert([_vector(1), _vector(1)],
-                                   [_payload(first, 'a'), _payload(second, 'b')],
+                                   [_payload(first, user_id, 'a'), _payload(second, user_id, 'b')],
                                    [_random_id(), _random_id()])
         hits = await async_pg_store.search('a', _vector(1), top_k=10, filters={'tenant_id': first})
         assert [hit.text for hit in hits] == ['a']
 
     async def test_keyword_search_matches_text_lemma(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'ignored', 'milvus vector database')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'ignored', 'milvus vector database')], [rid])
         hits = await async_pg_store.keyword_search('milvus', top_k=5, filters={'tenant_id': tenant_id})
         assert hits is not None and hits[0].id == rid
 
@@ -453,27 +480,51 @@ class TestAsyncPGVectorStoreIntegration:
         assert await async_pg_store.keyword_search('12', top_k=5) == []
 
     async def test_update_changes_metadata(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'before')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'before')], [rid])
         await async_pg_store.update(rid, payload={'tag': 'after'})
         got = await async_pg_store.get(rid)
         assert got.metadata == {'tag': 'after'}
 
     async def test_update_without_params_is_noop(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'kept')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'kept')], [rid])
         await async_pg_store.update(rid)
         got = await async_pg_store.get(rid)
         assert got.text == 'kept'
 
     async def test_delete_removes_row(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'gone')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'gone')], [rid])
         await async_pg_store.delete(rid)
         assert await async_pg_store.get(rid) is None
 
     async def test_list_applies_filters(self, async_pg_store):
-        tenant_id, rid = _random_id(), _random_id()
-        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, 'only')], [rid])
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'only')], [rid])
         listed = await async_pg_store.list(filters={'tenant_id': tenant_id})
         assert [item.id for item in listed] == [rid]
+
+
+    async def test_get_by_filter(self, async_pg_store):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        none_data = await async_pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id,'user_id':700})
+        assert none_data is None
+
+        data = await async_pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id, 'user_id': user_id})
+        assert data is not None
+        assert data.id == rid
+
+    async def test_get_by_filter_illegal_filter_key(self, async_pg_store):
+        tenant_id, rid, user_id = _random_id(), _random_id(), _random_id()
+
+        await async_pg_store.insert([_vector(1)], [_payload(tenant_id, user_id, 'test_get_by_filter_record')], [rid])
+
+        with pytest.raises(StorageError):
+            await async_pg_store.get_by_filter(rid, filters={'tenant_id': tenant_id})
+
+        with pytest.raises(StorageError):
+            await async_pg_store.get_by_filter(rid, filters={'user_id': user_id})

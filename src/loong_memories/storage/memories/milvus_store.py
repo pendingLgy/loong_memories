@@ -31,7 +31,7 @@ from copy import copy
 from typing import Any, Dict, List, Optional
 
 from loong_memories.core.exceptions import OptionalDependencyError, StorageError
-from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult
+from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult, GET_FILTER_REQUIRED_KEY
 
 try:  # 可选依赖：模块仍可导入，缺库时仅在实例化时报错。
     from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType, MilvusClient
@@ -283,6 +283,24 @@ class MilvusVectorStore(VectorStoreBase):
         return VectorStoreResult.to_vector_store_result(**item)
 
 
+    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+
+        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_exist is False:
+            raise StorageError("请求参数错误：" + str(filters))
+
+        result = self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
+        if not result:
+            return None
+
+        item = result[0]
+
+        is_all_equal = all(item.get(k) == filters.get(k) for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_equal is False:
+           return None
+
+        return VectorStoreResult.to_vector_store_result(**item)
 
     def search(self, query: str, vectors: List[float], top_k: int = 5, filters: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
@@ -434,6 +452,25 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
         if not result:
             return None
         return VectorStoreResult.to_vector_store_result(**result[0])
+
+    async def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+
+        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_exist is False:
+            raise StorageError("请求参数错误：" + str(filters))
+
+        result = await self.client.get(consistency_level="Strong", collection_name=self.collection_name, ids=id)
+        if not result:
+            return None
+
+        item = result[0]
+
+        is_all_equal = all(item.get(k) == filters.get(k) for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_equal is False:
+           return None
+
+        return VectorStoreResult.to_vector_store_result(**item)
 
     async def search(
         self, query: str, vectors: List[float], top_k: int = 5, filters: Optional[Dict[str, Any]] = None

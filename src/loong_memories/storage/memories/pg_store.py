@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterator, List, Optional, AsyncIterator
 
 
 from loong_memories.core.exceptions import OptionalDependencyError, StorageError
-from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult
+from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult, GET_FILTER_REQUIRED_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,9 @@ DIRECT_COLUMNS = {
 
 def _build_sqlalchemy_filter(table: Table, filters: Optional[Dict[str, Any]]) -> Any:
     """
-    使用 SQLAlchemy 表达式构建 WHERE 条件，自动适配顶层列与 metadata JSONB 字段。
+    使用 SQLAlchemy 表达式构建 WHERE 条件：
+    - is_direct = True 的键：严格使用顶层列，绝不使用 metadata 条件。
+    - metadata 字段：默认采用 @> 包含操作符（走 GIN 索引），仅在显式指定 contains/icontains 时才使用 LIKE 模糊查询。
     """
     if not filters:
         return None
@@ -69,9 +71,6 @@ def _build_sqlalchemy_filter(table: Table, filters: Optional[Dict[str, Any]]) ->
     conditions = []
     for key, value in filters.items():
         is_direct = key in DIRECT_COLUMNS
-
-        # 对于 metadata 字段，默认转为 string 表达（相当于 metadata->>key）
-        col = table.c[key] if is_direct else table.c.metadata[key].as_string()
 
         # 1. 检查键是否存在 (*)
         if value == "*":
@@ -81,52 +80,50 @@ def _build_sqlalchemy_filter(table: Table, filters: Optional[Dict[str, Any]]) ->
                 conditions.append(table.c.metadata.has_key(key))
             continue
 
-        # 2. 字典形式的操作符
-        if isinstance(value, dict):
-            for op, op_val in value.items():
-                # 判断是否需要按数值处理（大小比较 且 传入的值是数字类型）
-                is_numeric_op = op in ("gt", "gte", "lt", "lte")
-                if is_numeric_op and isinstance(op_val, (int, float)) and not is_direct:
-                    # 使用 sa.cast 替代 as_numeric()，避免缺少 precision/scale 参数报错
-                    expr = cast(table.c.metadata[key], Numeric)
-                else:
-                    expr = col
+        if is_direct:
+            # 2. 字典形式的操作符
+            if isinstance(value, dict):
+                for op, op_val in value.items():
+                    col = table.c[key]
+                    if op == "eq":
+                        conditions.append(col == op_val)
+                    elif op == "ne":
+                        conditions.append(col != op_val)
+                    elif op == "gt":
+                        conditions.append(col > op_val)
+                    elif op == "gte":
+                        conditions.append(col >= op_val)
+                    elif op == "lt":
+                        conditions.append(col < op_val)
+                    elif op == "lte":
+                        conditions.append(col <= op_val)
+                    elif op == "in":
+                        if not isinstance(op_val, list):
+                            raise ValueError('操作符 in 需要列表值')
+                        conditions.append(col.in_(op_val))
+                    elif op == "nin":
+                        if not isinstance(op_val, list):
+                            raise ValueError('操作符 nin 需要列表值')
+                        conditions.append(~col.in_(op_val))
+                    elif op == "contains":
+                        conditions.append(col.like(f"%{op_val}%"))
+                    elif op == "icontains":
+                        conditions.append(col.ilike(f"%{op_val}%"))
+                    else:
+                        raise ValueError(f'不支持的过滤操作符: {op}')
 
-                if op == "eq":
-                    conditions.append(expr == op_val)
-                elif op == "ne":
-                    conditions.append(expr != op_val)
-                elif op == "gt":
-                    conditions.append(expr > op_val)
-                elif op == "gte":
-                    conditions.append(expr >= op_val)
-                elif op == "lt":
-                    conditions.append(expr < op_val)
-                elif op == "lte":
-                    conditions.append(expr <= op_val)
-                elif op == "in":
-                    if not isinstance(op_val, list):
-                        raise ValueError('操作符 in 需要列表值')
-                    conditions.append(col.in_(op_val))
-                elif op == "nin":
-                    if not isinstance(op_val, list):
-                        raise ValueError('操作符 nin 需要列表值')
-                    conditions.append(~col.in_(op_val))
-                elif op == "contains":
-                    conditions.append(col.like(f"%{op_val}%"))
-                elif op == "icontains":
-                    conditions.append(col.ilike(f"%{op_val}%"))
-                else:
-                    raise ValueError(f'不支持的过滤操作符: {op}')
+            # 列表形式 (IN 查询)
+            elif isinstance(value, list):
+                conditions.append(table.c[key].in_(value))
 
-        # 3. 列表形式 (IN 查询)
-        elif isinstance(value, list):
-            conditions.append(col.in_(value))
+            else:
+                conditions.append(table.c[key] == value)
 
-        # 4. 普通等于匹配
         else:
             val_to_compare = json.dumps(value) if isinstance(value, bool) else value
-            conditions.append(col == val_to_compare)
+            # 使用 JSONB @> 操作符，完美触发 GIN 索引
+            conditions.append(table.c.metadata.op('@>')({key: val_to_compare}))
+
 
     return and_(*conditions) if conditions else None
 
@@ -442,6 +439,9 @@ class PGVectorStore(VectorStoreBase):
             conn.execute(
                 text(f"CREATE INDEX IF NOT EXISTS {safe_name}_text_idx ON {safe_name} USING gin ({_TEXT_VECTOR})"))
 
+            conn.execute(
+                text(f"CREATE INDEX IF NOT EXISTS {safe_name}_metadata_gin_idx ON vut_vectors USING gin (metadata)"))
+
     # ---------------- 写入与检索 ----------------
 
     def insert(self, vectors: List[List[float]], payloads: List[Dict[str, Any]], ids: List[int]) -> None:
@@ -564,6 +564,25 @@ class PGVectorStore(VectorStoreBase):
         if not row:
             return None
         return self._parse_search(row._asdict())
+
+    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+
+        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_exist is False:
+            raise StorageError("请求参数错误：" + str(filters))
+
+        filters["id"] = id
+        stmt = self._build_sql_list(filters, 1)
+
+        with self._session() as session:
+            rows = session.execute(stmt).fetchall()
+
+        if len(rows) != 1:
+            return None
+
+        return self._parse_search(rows[0]._asdict())
+
 
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         stmt = self._build_sql_list(filters, top_k)
@@ -801,6 +820,25 @@ class AsyncPGVectorStore(PGVectorStore):
             return None
         return self._parse(row._asdict())
 
+
+    async def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
+
+        is_all_exist = all(k in filters for k in GET_FILTER_REQUIRED_KEY)
+        if is_all_exist is False:
+            raise StorageError("请求参数错误：" + str(filters))
+
+        filters["id"] = id
+        stmt = self._build_sql_list(filters, 1)
+
+        async with self._session() as session:
+            result = await session.execute(stmt)
+            rows = result.fetchall()
+
+        if len(rows) != 1:
+            return None
+
+        return self._parse_search(rows[0]._asdict())
 
     async def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         stmt = self._build_sql_list(filters, top_k)
