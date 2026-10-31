@@ -37,6 +37,8 @@ from loong_memories.storage.memories.registry_vector import register_vector_stor
 # 支持的向量度量类型。
 MetricType = Literal["COSINE", "L2", "IP"]
 
+GET_FILTER_REQUIRED_KEY = ['user_id', 'tenant_id']
+
 
 class VectorStoreResult(BaseModel):
     """一次检索或读取得到的结果：id、相似度与元数据。"""
@@ -117,6 +119,10 @@ class VectorStoreBase(ABC):
     @abstractmethod
     def get(self, id: int) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
+
+    @abstractmethod
+    def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
+        """按 id, filter 读取单条，不存在返回 None。"""
 
     @abstractmethod
     def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
