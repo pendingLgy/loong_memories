@@ -335,7 +335,7 @@ class MilvusVectorStore(VectorStoreBase):
                filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
 
         kwargs = self._build_param_search(filter, top_k, vectors)
         try:
@@ -352,7 +352,7 @@ class MilvusVectorStore(VectorStoreBase):
                        filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入。"""
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
 
         try:
             hits = self.client.search(
@@ -375,7 +375,7 @@ class MilvusVectorStore(VectorStoreBase):
              top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
 
         rows = self.client.query(
             consistency_level="Strong",
@@ -529,7 +529,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
                      filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """稠密向量检索；集合含稀疏字段，故显式指定 anns_field。"""
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         kwargs = self._build_param_search(filter, top_k, vectors)
         try:
             hits = await self.client.search(consistency_level="Strong", **kwargs)
@@ -544,7 +544,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
                              top_k: int = 5,
                              filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """BM25 关键词检索：以原始查询文本作为稀疏向量输入；失败返回 None，与同步实现一致。"""
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         try:
             hits = await self.client.search(
                 consistency_level="Strong",
@@ -565,7 +565,7 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
                    filter: Optional[Dict[str, Any]] = None,
                    top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容；外层列表按既有约定包一层。"""
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         rows = await self.client.query(
             consistency_level="Strong",
             collection_name=self.collection_name,

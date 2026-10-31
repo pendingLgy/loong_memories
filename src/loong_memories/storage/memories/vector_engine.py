@@ -104,8 +104,8 @@ class VectorEngine:
     def insert(
         self,
         tenant_id: int,
-        user_id: int,
         vectors: List[List[float]],
+        user_id: Optional[int] = None,
         payloads: Optional[List[Dict[str, Any]]] = None,
         ids: Optional[List[int]] = None, # 修正为 int
     ) -> int:
@@ -122,20 +122,20 @@ class VectorEngine:
         self,
         vector_id: int,
         tenant_id: int,
-        user_id: int,
+        user_id: Optional[int] = None,
         vector: Optional[List[float]] = None,
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         """按 id 更新向量或元数据。"""
         if vector is not None:
             self._check_vector(vector)
-        self._store.update(vector_id, vector=vector, payload=payload)
+        self._store.update(vector_id, tenant_id, user_id=user_id, vector=vector, payload=payload)
         self._log("向量更新完成", id=vector_id, collection=self.collection_name)
 
 
-    def delete(self, vector_id: int) -> None:
+    def delete(self, vector_id: int, tenant_id: int, user_id: Optional[int] = None) -> None:
         """按 id 删除单条。"""
-        self._store.delete(vector_id)
+        self._store.delete(vector_id, tenant_id, user_id=user_id)
         self._log("向量删除完成", id=vector_id, collection=self.collection_name)
 
 
@@ -145,13 +145,16 @@ class VectorEngine:
         self,
         query: str,
         vectors: List[float],
+        tenant_id: int,
+        user_id: Optional[int] = None,
         top_k: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[VectorStoreResult]:
         """按相似度检索，返回按 score 降序的结果；top_k 缺省时用 default_top_k。"""
         self._check_vector(vectors)
         limit = self.default_top_k if top_k is None else top_k
-        results = self._store.search(query, vectors, top_k=limit, filters=filters)
+        results = self._store.search(query, vectors, tenant_id, user_id=user_id,
+                                    top_k=limit, filter=filters)
         self._log("向量检索完成", top_k=limit, hits=len(results), collection=self.collection_name)
         return results
 
@@ -159,27 +162,31 @@ class VectorEngine:
     def keyword_search(
         self,
         query: str,
+        tenant_id: int,
+        user_id: Optional[int] = None,
         top_k: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[VectorStoreResult]]:
         """关键词检索；实现不支持时返回 None。"""
         limit = self.default_top_k if top_k is None else top_k
-        results = self._store.keyword_search(query, top_k=limit, filters=filters)
+        results = self._store.keyword_search(query, tenant_id, user_id=user_id,
+                                            top_k=limit, filter=filters)
         hits = 0 if results is None else len(results)
         self._log("关键词检索完成", top_k=limit, hits=hits, collection=self.collection_name)
         return results
 
 
-    def get(self, vector_id: int) -> Optional[VectorStoreResult]:
+    def get(self, vector_id: int, tenant_id: int, user_id: Optional[int] = None) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        return self._store.get(vector_id)
+        return self._store.get(vector_id, tenant_id, user_id=user_id)
 
     def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
         """按 id, filter 读取单条，不存在返回 None。"""
         return self._store.get_by_filter(id,filters)
 
-    def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
-        return self._store.list(filters=filters, top_k=top_k) or []
+    def list(self, tenant_id: int, user_id: Optional[int] = None,
+             filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
+        return self._store.list(tenant_id, user_id=user_id, filter=filters, top_k=top_k) or []
 
 
     def __enter__(self) -> "VectorEngine":
@@ -242,7 +249,9 @@ class AsyncVectorEngine(VectorEngine):
     # ---------------- 写入 ----------------
     async def insert(
         self,
+        tenant_id: int,
         vectors: List[List[float]],
+        user_id: Optional[int] = None,
         payloads: Optional[List[Dict[str, Any]]] = None,
         ids: Optional[List[int]] = None, # 修正为 int
     ) -> int:
@@ -256,21 +265,23 @@ class AsyncVectorEngine(VectorEngine):
 
 
     async def update(
-        self,
-        vector_id: int,
-        vector: Optional[List[float]] = None,
-        payload: Optional[Dict[str, Any]] = None,
+            self,
+            vector_id: int,
+            tenant_id: int,
+            user_id: Optional[int] = None,
+            vector: Optional[List[float]] = None,
+            payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         """按 id 更新向量或元数据。"""
         if vector is not None:
             self._check_vector(vector)
-        await self._store.update(vector_id, vector=vector, payload=payload)
+        await self._store.update(vector_id, tenant_id, user_id=user_id, vector=vector, payload=payload)
         self._log("向量更新完成", id=vector_id, collection=self.collection_name)
 
 
-    async def delete(self, vector_id: int) -> None:
+    async def delete(self, vector_id: int, tenant_id: int, user_id: Optional[int] = None) -> None:
         """按 id 删除单条。"""
-        await self._store.delete(vector_id)
+        await self._store.delete(vector_id, tenant_id, user_id=user_id)
         self._log("向量删除完成", id=vector_id, collection=self.collection_name)
 
 
@@ -280,13 +291,16 @@ class AsyncVectorEngine(VectorEngine):
         self,
         query: str,
         vectors: List[float],
+        tenant_id: int,
+        user_id: Optional[int] = None,
         top_k: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[VectorStoreResult]:
         """按相似度检索，返回按 score 降序的结果；top_k 缺省时用 default_top_k。"""
         self._check_vector(vectors)
         limit = self.default_top_k if top_k is None else top_k
-        results = await self._store.search(query, vectors, top_k=limit, filters=filters)
+        results = await self._store.search(query, vectors, tenant_id, user_id=user_id,
+                                          top_k=limit, filter=filters)
         self._log("向量检索完成", top_k=limit, hits=len(results), collection=self.collection_name)
         return results
 
@@ -294,20 +308,23 @@ class AsyncVectorEngine(VectorEngine):
     async def keyword_search(
         self,
         query: str,
+        tenant_id: int,
+        user_id: Optional[int] = None,
         top_k: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[VectorStoreResult]]:
         """关键词检索；实现不支持时返回 None。"""
         limit = self.default_top_k if top_k is None else top_k
-        results = await self._store.keyword_search(query, top_k=limit, filters=filters)
+        results = await self._store.keyword_search(query, tenant_id, user_id=user_id,
+                                                  top_k=limit, filter=filters)
         hits = 0 if results is None else len(results)
         self._log("关键词检索完成", top_k=limit, hits=hits, collection=self.collection_name)
         return results
 
 
-    async def get(self, vector_id: int) -> Optional[VectorStoreResult]:
+    async def get(self, vector_id: int, tenant_id: int, user_id: Optional[int] = None) -> Optional[VectorStoreResult]:
         """按 id 读取单条，不存在返回 None。"""
-        return await self._store.get(vector_id)
+        return await self._store.get(vector_id, tenant_id, user_id=user_id)
 
 
     async def get_by_filter(self, id: int, filters: Dict[str, Any]) -> Optional[VectorStoreResult]:
@@ -315,8 +332,9 @@ class AsyncVectorEngine(VectorEngine):
         return await self._store.get_by_filter(id, filters)
 
 
-    async def list(self, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
-        return await self._store.list(filters=filters, top_k=top_k) or []
+    async def list(self, tenant_id: int, user_id: Optional[int] = None,
+                   filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
+        return await self._store.list(tenant_id, user_id=user_id, filter=filters, top_k=top_k) or []
 
 
     def __enter__(self) -> "AsyncVectorEngine":
@@ -335,14 +353,12 @@ def create_vector_engine(
 
 def build_vector_engine(
     settings: "VectorSettings",
-    metric_type: Optional[str] = None,
     **overrides: Any,
 ) -> VectorEngine:
     """按 VectorSettings 装配向量引擎：按后端组装连接参数，集合与维度统一注入。"""
     kwargs: Dict[str, Any] = {
         'collection_name': settings.collection,
         'vector_size': settings.vector_size,
-        'metric_type': metric_type or settings.metric_type,
     }
     kwargs.update(_backend_kwargs(settings))
     kwargs.update(overrides)
@@ -372,4 +388,3 @@ def _backend_kwargs(settings: "VectorSettings") -> Dict[str, Any]:
             'use_diskann': pg.use_diskann,
         }
     return {name: value for name, value in candidates.items() if value != ""}
-

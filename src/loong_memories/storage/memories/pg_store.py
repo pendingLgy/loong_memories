@@ -546,7 +546,7 @@ class PGVectorStore(VectorStoreBase):
                filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
 
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_search(filter, top_k, vectors)
 
         with self._session() as session:
@@ -566,7 +566,7 @@ class PGVectorStore(VectorStoreBase):
                        filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         "基于 text_lemma 的全文检索；失败返回 None。"
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_keyword_search(filter, query, top_k)
 
         try:
@@ -627,7 +627,7 @@ class PGVectorStore(VectorStoreBase):
              filter: Optional[Dict[str, Any]] = None,
              top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_list(filter, top_k)
         with self._session() as session:
             rows = session.execute(stmt).fetchall()
@@ -815,7 +815,7 @@ class AsyncPGVectorStore(PGVectorStore):
                      top_k: int = 5,
                      filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_search(filter, top_k, vectors)
 
         async with self._session() as session:
@@ -836,7 +836,7 @@ class AsyncPGVectorStore(PGVectorStore):
                              top_k: int = 5,
                              filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
 
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_keyword_search(filter, query, top_k)
 
         try:
@@ -858,7 +858,7 @@ class AsyncPGVectorStore(PGVectorStore):
                      id: int,
                      tenant_id: int,
                      user_id: Optional[int] = None) -> None:
-        stmt = self._build_sql_delete(id)
+        stmt = self._build_sql_delete(id, tenant_id, user_id)
         async with self._session() as session:
             await session.execute(stmt)
 
@@ -896,7 +896,7 @@ class AsyncPGVectorStore(PGVectorStore):
                    user_id: Optional[int] = None,
                    filter: Optional[Dict[str, Any]] = None,
                    top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
-        self._build_search_tenant_filter(filter, tenant_id, user_id)
+        filter = self._build_search_tenant_filter(filter, tenant_id, user_id)
         stmt = self._build_sql_list(filter, top_k)
         async with self._session() as session:
             result = await session.execute(stmt)

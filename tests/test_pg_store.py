@@ -777,9 +777,8 @@ class TestAsyncPGVectorStoreIntegration:
         listed = await async_pg_store.list(tenant_id, filter=_scope(tenant_id, tag='blue'))
         assert rid in [item.id for item in listed]
 
-    @pytest.mark.xfail(strict=True, reason='已知缺陷：AsyncPGVectorStore.delete 只把 id 传给 _build_sql_delete，缺少必填的 tenant_id')
     async def test_delete_removes_record(self, async_pg_store):
-        '''修好异步 delete 的参数透传后，本用例应转为通过，届时请移除 xfail 标记。'''
+        '''异步 delete 按 id 与租户条件删除，删除后按 id 查询应返回 None。'''
         tenant_id, rid, user_id = _next_id(), _next_id(), _next_id()
         await async_pg_store.insert([_vector(_random_seed())],
                                     [_payload(tenant_id, user_id)], [rid])
