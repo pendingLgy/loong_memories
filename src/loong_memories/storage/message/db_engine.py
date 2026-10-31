@@ -19,7 +19,7 @@ import logging
 from abc import abstractmethod
 from contextlib import contextmanager, asynccontextmanager
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Iterator
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
 from sqlalchemy import delete, insert, select, MetaData, text
 from sqlalchemy.engine import Engine
@@ -98,6 +98,8 @@ class DBEngine(BaseDB):
         """把历史记录对象转换为可写入的行字典；id 缺省时生成雪花 ID。"""
         return {
             "id": record.id or next_id(),
+            "tenant_id": record.tenant_id,
+            "user_id": record.user_id,
             "memory_id": record.memory_id,
             "old_memory": record.old_memory,
             "new_memory": record.new_memory,
@@ -113,6 +115,8 @@ class DBEngine(BaseDB):
         """把数据库行转换为历史记录对象。"""
         return HistoryRecord(
             id=row.get("id"),
+            tenant_id=row.get("tenant_id"),
+            user_id=row.get("user_id"),
             memory_id=row.get("memory_id"),
             old_memory=row.get("old_memory"),
             new_memory=row.get("new_memory"),
@@ -128,6 +132,8 @@ class DBEngine(BaseDB):
         """把消息对象转换为可写入的行字典。"""
         return {
             "id": message.id or next_id(),
+            "tenant_id": message.tenant_id,
+            "user_id": message.user_id,
             "session_scope": message.session_scope,
             "role": message.role,
             "content": message.content,
@@ -139,6 +145,8 @@ class DBEngine(BaseDB):
         """把数据库行转换为消息对象。"""
         return Message(
             id=row.get("id"),
+            tenant_id=row.get("tenant_id"),
+            user_id=row.get("user_id"),
             session_scope=row.get("session_scope"),
             role=row.get("role"),
             content=row.get("content"),
@@ -162,12 +170,31 @@ class DBEngine(BaseDB):
             session.execute(insert(self.history_table), rows)
         return [HistoryRecord(**row) for row in rows]
 
-    def get_history(self, memory_id: int) -> List[HistoryRecord]:
-        """按 memory_id 取历史，按时间升序。"""
+    def _history_conditions(self, memory_id: int, tenant_id: int,
+                            user_id: Optional[int] = None) -> List[Any]:
+        """历史查询条件：memory_id 与 tenant_id 必填，user_id 可选收窄。"""
+        table = self.history_table
+        conditions = [table.c.memory_id == memory_id, table.c.tenant_id == tenant_id]
+        if user_id is not None:
+            conditions.append(table.c.user_id == user_id)
+        return conditions
+
+    def _message_conditions(self, session_scope: str, tenant_id: int,
+                            user_id: Optional[int] = None) -> List[Any]:
+        """会话消息查询条件：session_scope 与 tenant_id 必填，user_id 可选收窄。"""
+        table = self.messages_table
+        conditions = [table.c.session_scope == session_scope, table.c.tenant_id == tenant_id]
+        if user_id is not None:
+            conditions.append(table.c.user_id == user_id)
+        return conditions
+
+    def get_history(self, memory_id: int, tenant_id: int,
+                    user_id: Optional[int] = None) -> List[HistoryRecord]:
+        """按 memory_id 与租户取历史；user_id 为可选收窄条件。"""
         table = self.history_table
         stmt = (
             select(table)
-            .where(table.c.memory_id == memory_id)
+            .where(*self._history_conditions(memory_id, tenant_id, user_id))
             .order_by(table.c.id.desc())
         )
         with self._session() as session:
@@ -180,23 +207,26 @@ class DBEngine(BaseDB):
         if not rows:
             return []
         table = self.messages_table
-        scopes = sorted({row["session_scope"] for row in rows})
+        # 淘汰按「租户 + 会话」分组，避免不同租户共用同一 session_scope 时互相清除。
+        scopes = sorted({(row["tenant_id"], row["session_scope"]) for row in rows},
+                        key=lambda item: (str(item[0]), str(item[1])))
         with self._session() as session:
             session.execute(insert(table), rows)
-            for scope in scopes:
-                session.execute(self._build_evict_stmt(scope, keep_last))
+            for tenant_id, scope in scopes:
+                session.execute(self._build_evict_stmt(scope, keep_last, tenant_id))
 
         return [self._to_message(row) for row in rows]
 
-    def get_last_messages(self, session_scope: str, limit: int = 10) -> List[Message]:
-        """按时间升序取会话最近 limit 条消息。"""
+    def get_last_messages(self, session_scope: str, tenant_id: int, limit: int = 10,
+                          user_id: Optional[int] = None) -> List[Message]:
+        """按时间升序取租户内该会话最近 limit 条消息；user_id 为可选收窄条件。"""
         table = self.messages_table
         recent = (
             select(
-                table.c.id, table.c.session_scope, table.c.role,
-                table.c.content, table.c.name, table.c.created_at_tz,
+                table.c.id, table.c.tenant_id, table.c.user_id, table.c.session_scope,
+                table.c.role, table.c.content, table.c.name, table.c.created_at_tz,
             )
-            .where(table.c.session_scope == session_scope)
+            .where(*self._message_conditions(session_scope, tenant_id, user_id))
             .order_by(table.c.id.desc())
             .limit(limit)
             .subquery()
@@ -206,12 +236,15 @@ class DBEngine(BaseDB):
             rows = session.execute(stmt).mappings().all()
         return [self._to_message(dict(row)) for row in rows]
 
-    def _build_evict_stmt(self, session_scope: str, keep_last: int) -> Any:
-        """构造删除语句：保留会话最近 keep_last 条，其余删除。"""
+    def _build_evict_stmt(self, session_scope: str, keep_last: int, tenant_id: int) -> Any:
+        """构造删除语句：在租户内保留会话最近 keep_last 条，其余删除。
+
+        tenant_id 必须参与条件，否则不同租户共用同一 session_scope 时会互相清除。
+        """
         table = self.messages_table
         recent = (
             select(table.c.id)
-            .where(table.c.session_scope == session_scope)
+            .where(table.c.session_scope == session_scope, table.c.tenant_id == tenant_id)
             .order_by(table.c.id.desc())
             .limit(keep_last)
             .subquery()
@@ -219,6 +252,7 @@ class DBEngine(BaseDB):
 
         stmt = delete(table).where(
             table.c.session_scope == session_scope,
+            table.c.tenant_id == tenant_id,
             table.c.id.notin_(select(recent.c.id))
         )
 
@@ -310,12 +344,13 @@ class AsyncDBEngine(DBEngine):
             await session.execute(insert(self.history_table), rows)
         return [HistoryRecord(**row) for row in rows]
 
-    async def get_history(self, memory_id: int) -> List[HistoryRecord]:
-        """按 memory_id 取历史，按时间升序。"""
+    async def get_history(self, memory_id: int, tenant_id: int,
+                          user_id: Optional[int] = None) -> List[HistoryRecord]:
+        """按 memory_id 与租户取历史；user_id 为可选收窄条件。"""
         table = self.history_table
         stmt = (
             select(table)
-            .where(table.c.memory_id == memory_id)
+            .where(*self._history_conditions(memory_id, tenant_id, user_id))
             .order_by(table.c.id.desc())
         )
         async with self._session() as session:
@@ -331,23 +366,26 @@ class AsyncDBEngine(DBEngine):
         if not rows:
             return []
         table = self.messages_table
-        scopes = sorted({row["session_scope"] for row in rows})
+        # 淘汰按「租户 + 会话」分组，避免不同租户共用同一 session_scope 时互相清除。
+        scopes = sorted({(row["tenant_id"], row["session_scope"]) for row in rows},
+                        key=lambda item: (str(item[0]), str(item[1])))
         async with self._session() as session:
             await session.execute(insert(table), rows)
-            for scope in scopes:
-                await session.execute(self._build_evict_stmt(scope, keep_last))
+            for tenant_id, scope in scopes:
+                await session.execute(self._build_evict_stmt(scope, keep_last, tenant_id))
 
         return [self._to_message(row) for row in rows]
 
-    async def get_last_messages(self, session_scope: str, limit: int = 10) -> List[Message]:
-        """按时间升序取会话最近 limit 条消息。"""
+    async def get_last_messages(self, session_scope: str, tenant_id: int, limit: int = 10,
+                                user_id: Optional[int] = None) -> List[Message]:
+        """按时间升序取租户内该会话最近 limit 条消息；user_id 为可选收窄条件。"""
         table = self.messages_table
         recent = (
             select(
-                table.c.id, table.c.session_scope, table.c.role,
-                table.c.content, table.c.name, table.c.created_at_tz,
+                table.c.id, table.c.tenant_id, table.c.user_id, table.c.session_scope,
+                table.c.role, table.c.content, table.c.name, table.c.created_at_tz,
             )
-            .where(table.c.session_scope == session_scope)
+            .where(*self._message_conditions(session_scope, tenant_id, user_id))
             .order_by(table.c.id.desc())
             .limit(limit)
             .subquery()

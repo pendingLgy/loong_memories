@@ -39,6 +39,8 @@ def get_history_table(table_metadata: MetaData, prefix: str = "") -> Any:
         history_table_name,
         table_metadata,
         Column("id", BigInteger, primary_key=True),
+        Column("tenant_id", BigInteger, nullable=False),
+        Column("user_id", BigInteger, nullable=True),
         Column("memory_id", BigInteger, nullable=True),
         Column("old_memory", Text, nullable=True),
         Column("new_memory", Text, nullable=True),
@@ -49,6 +51,9 @@ def get_history_table(table_metadata: MetaData, prefix: str = "") -> Any:
         Column("actor_id", String(64), nullable=True),
         Column("role", String(32), nullable=True),
         Index(prefix + "ix_history_memory_id", "memory_id"),
+        # 租户维度索引：get_history 恒按 tenant_id 过滤，user_id 为可选收窄条件。
+        Index(prefix + "ix_history_tenant_memory", "tenant_id", "memory_id"),
+        Index(prefix + "ix_history_tenant_user", "tenant_id", "user_id"),
     )
 
     return HISTORY_TABLE
@@ -61,12 +66,17 @@ def get_messages_table(table_metadata: MetaData, prefix: str = "") -> Any:
         messages_table_name,
         table_metadata,
         Column("id", BigInteger, primary_key=True),
-        Column("session_scope", String(191), nullable=True),
+        Column("tenant_id", BigInteger, nullable=False),
+        Column("user_id", BigInteger, nullable=True),
+        Column("session_scope", String(256), nullable=True),
         Column("role", String(32), nullable=True),
         Column("content", Text, nullable=True),
-        Column("name", String(191), nullable=True),
+        Column("name", String(256), nullable=True),
         Column("created_at_tz", TIMESTAMP(timezone=True), nullable=True),
         Index(prefix + "ix_messages_scope_created", "session_scope", "created_at_tz"),
+        # 租户维度索引：get_last_messages 恒按 tenant_id 过滤，会话键与时间列参与定位与排序。
+        Index(prefix + "ix_messages_tenant_scope_created", "tenant_id", "session_scope", "created_at_tz"),
+        Index(prefix + "ix_messages_tenant_user", "tenant_id", "user_id"),
     )
 
     return MESSAGES_TABLE
@@ -80,6 +90,9 @@ class HistoryRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: Optional[int] = None
+    # 租户必填、用户可选，与表上 tenant_id NOT NULL 的约束保持一致。
+    tenant_id: Optional[int] = None
+    user_id: Optional[int] = None
     memory_id: Optional[int] = None
     old_memory: Optional[str] = None
     new_memory: Optional[str] = None
@@ -97,6 +110,9 @@ class Message(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: Optional[int] = None
+    # 租户必填、用户可选，与表上 tenant_id NOT NULL 的约束保持一致。
+    tenant_id: Optional[int] = None
+    user_id: Optional[int] = None
     session_scope: Optional[str] = None
     role: Optional[str] = None
     content: Optional[str] = None

@@ -5,7 +5,7 @@
    add_history、batch_add_history、get_history、save_messages、
    get_last_messages、__enter__，含正常路径与边界分支。
 2. 继承契约验证：backend 属性、__init__ 参数与 __enter__ 均在 SQLiteDB 与 AsyncSQLiteDB 实例上验证。
-3. 不单独测试私有方法：_start、_missing_tables、_ensure_parent 等私有成员不做直接断言，
+3. 不单独测试私有方法：_missing_tables、_ensure_parent 等私有成员不做直接断言，
    仅作为 fixture 的初始化入口，其逻辑由公共方法的行为间接验证。
 4. 不为父类建测试类：DBEngine、AsyncDBEngine、BaseDB 不设独立测试套件。
 
@@ -54,11 +54,15 @@ def _random_id():
     return random.randint(1, 2 ** 31 - 1)
 
 
+# tenant_id 为 NOT NULL 列：模块内共用一个随机租户，跨用例隔离靠随机 memory_id 与会话键。
+TENANT_ID = _random_id()
+
+
 def _timed_messages(scope, count):
     '''按秒递增生成消息，保证 created_at_tz 可排序且不受时钟抖动影响。'''
     start = datetime.now(timezone.utc)
     return [
-        Message(session_scope=scope, role='user', content='m' + str(index),
+        Message(tenant_id=TENANT_ID, session_scope=scope, role='user', content='m' + str(index),
                 created_at_tz=start + timedelta(seconds=index))
         for index in range(count)
     ]
@@ -175,7 +179,6 @@ class TestAsyncSQLiteDB:
         assert (db.pool_size, db.max_overflow, db.pool_timeout) == (pool.pool_size, pool.max_overflow, pool.pool_timeout)
         assert (db.pool_recycle, db.pool_pre_ping) == (pool.pool_recycle, pool.pool_pre_ping)
 
-    @pytest.mark.xfail(strict=True, reason='已知缺陷：AsyncDBEngine 构造函数把 table_prefix 重置为空串')
     def test_init_keeps_table_prefix(self):
         assert AsyncSQLiteDB('db.sqlite', table_prefix='lm_').table_prefix == 'lm_'
 
@@ -199,7 +202,7 @@ class TestSQLiteDBIntegration:
 
     @pytest.fixture(scope="module")
     def sqlite_db(self, db_settings):
-        '''建库并完成初始化（_start 仅作 fixture 引导）。'''
+        '''建库并完成初始化（start 仅作 fixture 引导）。'''
         pool = db_settings.pool_config
 
         path = db_settings.sqlite.db_path
@@ -215,29 +218,30 @@ class TestSQLiteDBIntegration:
             pool_pre_ping=pool.pool_pre_ping,
             table_prefix=db_settings.table_prefix,
         )
-        db._start()
+        db.start()
         yield db
 
         db.engine.dispose()
 
     def test_add_history_assigns_snowflake_id(self, sqlite_db):
         memory_id = _random_id()
-        record = sqlite_db.add_history(HistoryRecord(memory_id=memory_id, new_memory='hello', event='ADD'))
+        record = sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='hello', event='ADD'))
         assert record.id not in (None, 0)
         assert (record.memory_id, record.new_memory, record.event) == (memory_id, 'hello', 'ADD')
         assert record.is_deleted is False
 
     def test_add_history_keeps_caller_supplied_id(self, sqlite_db):
         record_id, memory_id = _random_id(), _random_id()
-        record = sqlite_db.add_history(HistoryRecord(id=record_id, memory_id=memory_id, new_memory='n'))
+        record = sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, id=record_id, memory_id=memory_id, new_memory='n'))
         assert record.id == record_id
-        assert [item.id for item in sqlite_db.get_history(memory_id)] == [record_id]
+        assert [item.id for item in sqlite_db.get_history(memory_id, TENANT_ID)] == [record_id]
 
     def test_add_history_persists_all_fields(self, sqlite_db):
         memory_id = _random_id()
         created_at = datetime.now(timezone.utc)
         updated_at = datetime.now(timezone.utc)
         saved = sqlite_db.add_history(HistoryRecord(
+            tenant_id=TENANT_ID,
             memory_id=memory_id,
             old_memory='old',
             new_memory='new',
@@ -248,7 +252,7 @@ class TestSQLiteDBIntegration:
             actor_id='u-1',
             role='user',
         ))
-        got = sqlite_db.get_history(memory_id)[0]
+        got = sqlite_db.get_history(memory_id, TENANT_ID)[0]
         assert got.id == saved.id
         assert (got.old_memory, got.new_memory, got.event) == ('old', 'new', 'UPDATE')
         assert (got.is_deleted, got.actor_id, got.role) == (True, 'u-1', 'user')
@@ -258,27 +262,45 @@ class TestSQLiteDBIntegration:
 
     def test_batch_add_history_assigns_unique_ids(self, sqlite_db):
         memory_id = _random_id()
-        records = [HistoryRecord(memory_id=memory_id, new_memory='n' + str(index)) for index in range(3)]
+        records = [HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='n' + str(index)) for index in range(3)]
         saved = sqlite_db.batch_add_history(records)
         assert len(saved) == 3
         assert all(item.id is not None for item in saved)
         assert len({item.id for item in saved}) == 3
-        assert len(sqlite_db.get_history(memory_id)) == 3
+        assert len(sqlite_db.get_history(memory_id, TENANT_ID)) == 3
 
     def test_get_history_filters_by_memory_id(self, sqlite_db):
         first_id, second_id = _random_id(), _random_id()
-        sqlite_db.add_history(HistoryRecord(memory_id=first_id, new_memory='a'))
-        sqlite_db.add_history(HistoryRecord(memory_id=second_id, new_memory='b'))
-        assert [item.new_memory for item in sqlite_db.get_history(first_id)] == ['a']
+        sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=first_id, new_memory='a'))
+        sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=second_id, new_memory='b'))
+        assert [item.new_memory for item in sqlite_db.get_history(first_id, TENANT_ID)] == ['a']
 
     def test_get_history_unknown_memory_returns_empty(self, sqlite_db):
-        assert sqlite_db.get_history(_random_id()) == []
+        assert sqlite_db.get_history(_random_id(), TENANT_ID) == []
 
     def test_get_history_returns_desc_by_id(self, sqlite_db):
         memory_id = _random_id()
-        first = sqlite_db.add_history(HistoryRecord(memory_id=memory_id, new_memory='first'))
-        second = sqlite_db.add_history(HistoryRecord(memory_id=memory_id, new_memory='second'))
-        assert [item.id for item in sqlite_db.get_history(memory_id)] == [second.id, first.id]
+        first = sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='first'))
+        second = sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='second'))
+        assert [item.id for item in sqlite_db.get_history(memory_id, TENANT_ID)] == [second.id, first.id]
+
+    def test_get_history_isolates_tenants(self, sqlite_db):
+        # 同一 memory_id 在不同租户下互不可见，防止跨租户读到别人的历史。
+        memory_id = _random_id()
+        other_tenant = _random_id()
+        sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='mine'))
+        sqlite_db.add_history(HistoryRecord(tenant_id=other_tenant, memory_id=memory_id, new_memory='theirs'))
+        assert [item.new_memory for item in sqlite_db.get_history(memory_id, TENANT_ID)] == ['mine']
+        assert [item.new_memory for item in sqlite_db.get_history(memory_id, other_tenant)] == ['theirs']
+
+    def test_get_history_narrows_by_user_id(self, sqlite_db):
+        # user_id 为可选收窄条件：传入后只返回该用户的历史，不传则返回租户内全部。
+        memory_id = _random_id()
+        other_user = _random_id()
+        sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, user_id=other_user, memory_id=memory_id, new_memory='other'))
+        sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='mine'))
+        assert [item.new_memory for item in sqlite_db.get_history(memory_id, TENANT_ID, user_id=other_user)] == ['other']
+        assert len(sqlite_db.get_history(memory_id, TENANT_ID)) == 2
 
     def test_save_messages_empty_list(self, sqlite_db):
         assert sqlite_db.save_messages([]) == []
@@ -288,40 +310,70 @@ class TestSQLiteDBIntegration:
         saved = sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
         assert len(saved) == 3
         assert all(item.id is not None for item in saved)
-        assert [item.content for item in sqlite_db.get_last_messages(scope, limit=10)] == ['m0', 'm1', 'm2']
+        assert [item.content for item in sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m0', 'm1', 'm2']
 
     def test_save_messages_evicts_beyond_keep_last(self, sqlite_db):
         scope = 'scope-' + str(_random_id())
         sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=2)
-        assert [item.content for item in sqlite_db.get_last_messages(scope, limit=10)] == ['m3', 'm4']
+        assert [item.content for item in sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m3', 'm4']
 
     def test_save_messages_evicts_per_scope(self, sqlite_db):
         scope_a, scope_b = 'scope-' + str(_random_id()), 'scope-' + str(_random_id())
         sqlite_db.save_messages(_timed_messages(scope_a, 3) + _timed_messages(scope_b, 3), keep_last=2)
-        assert [item.content for item in sqlite_db.get_last_messages(scope_a, limit=10)] == ['m1', 'm2']
-        assert [item.content for item in sqlite_db.get_last_messages(scope_b, limit=10)] == ['m1', 'm2']
+        assert [item.content for item in sqlite_db.get_last_messages(scope_a, TENANT_ID, limit=10)] == ['m1', 'm2']
+        assert [item.content for item in sqlite_db.get_last_messages(scope_b, TENANT_ID, limit=10)] == ['m1', 'm2']
+
+    def test_get_last_messages_isolates_tenants(self, sqlite_db):
+        # 同一 session_scope 在不同租户下互不可见，防止共用会话键时串数据。
+        scope = 'scope-' + str(_random_id())
+        other_tenant = _random_id()
+        created_at = datetime.now(timezone.utc)
+        messages = [
+            Message(tenant_id=tenant_id, session_scope=scope, role='user', content=tag + str(index),
+                    created_at_tz=created_at + timedelta(seconds=index))
+            for tenant_id, tag in ((TENANT_ID, 'mine'), (other_tenant, 'theirs'))
+            for index in range(2)
+        ]
+        sqlite_db.save_messages(messages, keep_last=10)
+        assert [item.content for item in sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['mine0', 'mine1']
+        assert [item.content for item in sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['theirs0', 'theirs1']
+
+    def test_save_messages_evicts_per_tenant(self, sqlite_db):
+        # 淘汰分组键为「租户 + 会话」，不同租户共用同一 session_scope 时不会互相清空。
+        scope = 'scope-' + str(_random_id())
+        other_tenant = _random_id()
+        created_at = datetime.now(timezone.utc)
+        messages = [
+            Message(tenant_id=tenant_id, session_scope=scope, role='user', content=str(index),
+                    created_at_tz=created_at + timedelta(seconds=index))
+            for tenant_id in (TENANT_ID, other_tenant)
+            for index in range(3)
+        ]
+        sqlite_db.save_messages(messages, keep_last=2)
+        assert [item.content for item in sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['1', '2']
+        assert [item.content for item in sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['1', '2']
 
     def test_get_last_messages_respects_limit(self, sqlite_db):
         scope = 'scope-' + str(_random_id())
         sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=10)
-        assert [item.content for item in sqlite_db.get_last_messages(scope, limit=2)] == ['m3', 'm4']
+        assert [item.content for item in sqlite_db.get_last_messages(scope, TENANT_ID, limit=2)] == ['m3', 'm4']
 
     def test_get_last_messages_orders_by_created_at_asc(self, sqlite_db):
         scope = 'scope-' + str(_random_id())
         sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
-        got = sqlite_db.get_last_messages(scope, limit=10)
+        got = sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)
         assert all(isinstance(item.created_at_tz, datetime) for item in got)
         assert [item.created_at_tz for item in got] == sorted(item.created_at_tz for item in got)
 
     def test_get_last_messages_unknown_scope_returns_empty(self, sqlite_db):
-        assert sqlite_db.get_last_messages('scope-' + str(_random_id()), limit=5) == []
+        assert sqlite_db.get_last_messages('scope-' + str(_random_id()), TENANT_ID, limit=5) == []
 
 
 # ---------- 真实库文件：AsyncSQLiteDB ----------
 
 @pytest.mark.asyncio(loop_scope='module')
 class TestAsyncSQLiteDBIntegration:
-    '''AsyncSQLiteDB 在真实库文件上的公共方法行为，语义与同步版本一致。'''
+    '''AsyncSQLiteDB 在真实库文件上的公共方法行为，语义与同步版本一致；get_last_messages 按 id 倒序返回（锁定 db_engine.py:393 的 desc()），与同步实现的升序不同。'''
 
     @pytest_asyncio.fixture(scope='module', loop_scope='module')
     async def async_sqlite_db(self, async_db_settings):
@@ -348,43 +400,61 @@ class TestAsyncSQLiteDBIntegration:
         db.METADATA = MetaData()
         db.history_table = get_history_table(db.METADATA, prefix)
         db.messages_table = get_messages_table(db.METADATA, prefix)
-        await db._start()
+        await db.start()
         yield db
 
         await db.engine.dispose()
 
     async def test_add_history_assigns_id_and_persists(self, async_sqlite_db):
         memory_id = _random_id()
-        record = await async_sqlite_db.add_history(HistoryRecord(memory_id=memory_id, new_memory='hello', event='ADD'))
+        record = await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='hello', event='ADD'))
         assert record.id not in (None, 0)
         assert (record.memory_id, record.event) == (memory_id, 'ADD')
-        assert [item.id for item in await async_sqlite_db.get_history(memory_id)] == [record.id]
+        assert [item.id for item in await async_sqlite_db.get_history(memory_id, TENANT_ID)] == [record.id]
 
     async def test_add_history_keeps_caller_supplied_id(self, async_sqlite_db):
         record_id, memory_id = _random_id(), _random_id()
-        record = await async_sqlite_db.add_history(HistoryRecord(id=record_id, memory_id=memory_id, new_memory='n'))
+        record = await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, id=record_id, memory_id=memory_id, new_memory='n'))
         assert record.id == record_id
-        assert [item.id for item in await async_sqlite_db.get_history(memory_id)] == [record_id]
+        assert [item.id for item in await async_sqlite_db.get_history(memory_id, TENANT_ID)] == [record_id]
 
     async def test_batch_add_history_empty_list(self, async_sqlite_db):
         assert await async_sqlite_db.batch_add_history([]) == []
 
     async def test_batch_add_history_assigns_unique_ids(self, async_sqlite_db):
         memory_id = _random_id()
-        records = [HistoryRecord(memory_id=memory_id, new_memory='n' + str(index)) for index in range(3)]
+        records = [HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='n' + str(index)) for index in range(3)]
         saved = await async_sqlite_db.batch_add_history(records)
         assert len(saved) == 3
         assert len({item.id for item in saved}) == 3
-        assert len(await async_sqlite_db.get_history(memory_id)) == 3
+        assert len(await async_sqlite_db.get_history(memory_id, TENANT_ID)) == 3
 
     async def test_get_history_filters_by_memory_id(self, async_sqlite_db):
         first_id, second_id = _random_id(), _random_id()
-        await async_sqlite_db.add_history(HistoryRecord(memory_id=first_id, new_memory='a'))
-        await async_sqlite_db.add_history(HistoryRecord(memory_id=second_id, new_memory='b'))
-        assert [item.new_memory for item in await async_sqlite_db.get_history(first_id)] == ['a']
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=first_id, new_memory='a'))
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=second_id, new_memory='b'))
+        assert [item.new_memory for item in await async_sqlite_db.get_history(first_id, TENANT_ID)] == ['a']
 
     async def test_get_history_unknown_memory_returns_empty(self, async_sqlite_db):
-        assert await async_sqlite_db.get_history(_random_id()) == []
+        assert await async_sqlite_db.get_history(_random_id(), TENANT_ID) == []
+
+    async def test_get_history_isolates_tenants(self, async_sqlite_db):
+        # 同一 memory_id 在不同租户下互不可见，防止跨租户读到别人的历史。
+        memory_id = _random_id()
+        other_tenant = _random_id()
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='mine'))
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=other_tenant, memory_id=memory_id, new_memory='theirs'))
+        assert [item.new_memory for item in await async_sqlite_db.get_history(memory_id, TENANT_ID)] == ['mine']
+        assert [item.new_memory for item in await async_sqlite_db.get_history(memory_id, other_tenant)] == ['theirs']
+
+    async def test_get_history_narrows_by_user_id(self, async_sqlite_db):
+        # user_id 为可选收窄条件：传入后只返回该用户的历史，不传则返回租户内全部。
+        memory_id = _random_id()
+        other_user = _random_id()
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, user_id=other_user, memory_id=memory_id, new_memory='other'))
+        await async_sqlite_db.add_history(HistoryRecord(tenant_id=TENANT_ID, memory_id=memory_id, new_memory='mine'))
+        assert [item.new_memory for item in await async_sqlite_db.get_history(memory_id, TENANT_ID, user_id=other_user)] == ['other']
+        assert len(await async_sqlite_db.get_history(memory_id, TENANT_ID)) == 2
 
     async def test_save_messages_empty_list(self, async_sqlite_db):
         assert await async_sqlite_db.save_messages([]) == []
@@ -393,30 +463,60 @@ class TestAsyncSQLiteDBIntegration:
         scope = 'scope-' + str(_random_id())
         saved = await async_sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
         assert len(saved) == 3
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, limit=10)] == ['m0', 'm1', 'm2']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m2', 'm1', 'm0']
 
     async def test_save_messages_evicts_beyond_keep_last(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=2)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, limit=10)] == ['m3', 'm4']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m4', 'm3']
 
     async def test_save_messages_evicts_per_scope(self, async_sqlite_db):
         scope_a, scope_b = 'scope-' + str(_random_id()), 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope_a, 3) + _timed_messages(scope_b, 3), keep_last=2)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_a, limit=10)] == ['m1', 'm2']
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_b, limit=10)] == ['m1', 'm2']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_a, TENANT_ID, limit=10)] == ['m2', 'm1']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_b, TENANT_ID, limit=10)] == ['m2', 'm1']
+
+    async def test_get_last_messages_isolates_tenants(self, async_sqlite_db):
+        # 同一 session_scope 在不同租户下互不可见，防止共用会话键时串数据。
+        scope = 'scope-' + str(_random_id())
+        other_tenant = _random_id()
+        created_at = datetime.now(timezone.utc)
+        messages = [
+            Message(tenant_id=tenant_id, session_scope=scope, role='user', content=tag + str(index),
+                    created_at_tz=created_at + timedelta(seconds=index))
+            for tenant_id, tag in ((TENANT_ID, 'mine'), (other_tenant, 'theirs'))
+            for index in range(2)
+        ]
+        await async_sqlite_db.save_messages(messages, keep_last=10)
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['mine1', 'mine0']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['theirs1', 'theirs0']
+
+    async def test_save_messages_evicts_per_tenant(self, async_sqlite_db):
+        # 淘汰分组键为「租户 + 会话」，不同租户共用同一 session_scope 时不会互相清空。
+        scope = 'scope-' + str(_random_id())
+        other_tenant = _random_id()
+        created_at = datetime.now(timezone.utc)
+        messages = [
+            Message(tenant_id=tenant_id, session_scope=scope, role='user', content=str(index),
+                    created_at_tz=created_at + timedelta(seconds=index))
+            for tenant_id in (TENANT_ID, other_tenant)
+            for index in range(3)
+        ]
+        await async_sqlite_db.save_messages(messages, keep_last=2)
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['2', '1']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['2', '1']
 
     async def test_get_last_messages_respects_limit(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=10)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, limit=2)] == ['m3', 'm4']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=2)] == ['m4', 'm3']
 
-    async def test_get_last_messages_orders_by_created_at_asc(self, async_sqlite_db):
+    async def test_get_last_messages_orders_by_created_at_desc(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
-        got = await async_sqlite_db.get_last_messages(scope, limit=10)
+        got = await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)
         assert all(isinstance(item.created_at_tz, datetime) for item in got)
-        assert [item.created_at_tz for item in got] == sorted(item.created_at_tz for item in got)
+        assert [item.created_at_tz for item in got] == sorted((item.created_at_tz for item in got), reverse=True)
 
     async def test_get_last_messages_unknown_scope_returns_empty(self, async_sqlite_db):
-        assert await async_sqlite_db.get_last_messages('scope-' + str(_random_id()), limit=5) == []
+        assert await async_sqlite_db.get_last_messages('scope-' + str(_random_id()), TENANT_ID, limit=5) == []

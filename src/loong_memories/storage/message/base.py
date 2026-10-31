@@ -51,8 +51,9 @@ class BaseDB(ABC):
         """批量追加历史记录，返回补全 id 后的对象列表。"""
 
     @abstractmethod
-    def get_history(self, memory_id: int) -> List[HistoryRecord]:
-        """按 memory_id 取历史，按时间升序。"""
+    def get_history(self, memory_id: int, tenant_id: int,
+                    user_id: Optional[int] = None) -> List[HistoryRecord]:
+        """按 memory_id 与租户取历史；user_id 为可选收窄条件。"""
 
     # ---------------- 会话消息 ----------------
 
@@ -61,5 +62,6 @@ class BaseDB(ABC):
         """写入消息，并只保留各会话最近的 keep_last 条。"""
 
     @abstractmethod
-    def get_last_messages(self, session_scope: str, limit: int = 10) -> List[Message]:
-        """按时间升序取会话最近 limit 条消息。"""
+    def get_last_messages(self, session_scope: str, tenant_id: int, limit: int = 10,
+                          user_id: Optional[int] = None) -> List[Message]:
+        """按时间升序取租户内该会话最近 limit 条消息；user_id 为可选收窄条件。"""
