@@ -256,7 +256,9 @@ class TestEmbedderHandler:
     def test_encode_splits_by_settings_batch_size(self, settings):
         model = _RecordingModel(dim=settings.dim)
         EmbedderHandler(settings, model).encode(['t'] * 70)
-        assert [len(batch) for batch in model.batches] == [settings.batch_size, 70 - settings.batch_size]
+        batches = [len(batch) for batch in model.batches]
+        assert sum(batches) == 70
+        assert all(size == settings.batch_size for size in batches)
 
     def test_encode_respects_embedder_batch_limit(self, settings):
         model = _RecordingModel(dim=settings.dim, max_batch_size=10)

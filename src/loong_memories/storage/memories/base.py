@@ -73,6 +73,7 @@ class VectorStoreResult(BaseModel):
             metadata=kwargs.get("metadata")
         )
 
+
 class VectorStoreBase(ABC):
     """向量库统一接口：声明 backend 后自动登记，配置改后端名即可切换。"""
 
@@ -176,10 +177,10 @@ class VectorStoreBase(ABC):
         return metadata
 
 
-    def _build_search_tenant_filter(self, filter: dict[str, Any] | None, tenant_id: int, user_id: int | None):
-        if not filter:
-            filter = {}
-
-        filter['tenant_id'] = tenant_id
+    def _build_search_tenant_filter(self, filter: dict[str, Any] | None, tenant_id: int, user_id: int | None) -> dict[str, Any]:
+        """就地补齐租户与用户过滤条件并返回；filter 为空时必须返回新字典，否则调用方仍持 None 而丢失租户隔离。"""
+        filters = filter if isinstance(filter, dict) else {}
+        filters['tenant_id'] = tenant_id
         if user_id is not None:
-            filter['user_id'] = tenant_id
+            filters['user_id'] = user_id
+        return filters

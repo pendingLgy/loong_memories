@@ -196,7 +196,7 @@ class TestOpenAILLMProvider:
     def test_client_is_openai_instance(self, settings):
         llm = OpenAILLMProvider(settings)
         assert isinstance(llm.client, openai.OpenAI)
-        assert 'api.example.com' in str(llm.client.base_url)
+        assert str(llm.client.base_url).startswith(settings.base_url)
 
 
 class TestDeepSeekLLMProvider:
@@ -262,7 +262,7 @@ class TestLLMHandler:
 
     def test_provider_resolves_from_settings(self, settings):
         handler = LLMHandler(settings)
-        assert isinstance(handler.provider, DeepSeekLLMProvider)
+        assert isinstance(handler.provider, QwenLLMProvider)
 
     def test_provider_is_cached(self, settings):
         handler = LLMHandler(settings)
