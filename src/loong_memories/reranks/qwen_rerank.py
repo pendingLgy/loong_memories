@@ -12,14 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+"""DashScope 原生 Text-Rerank 接口实现。
+
+只负责一次重排调用与结果回填：正文提取、请求组装、分数回填、失败降级。
+接口不可用时保留原始顺序并给出中立分值，避免上游检索链路因重排故障中断。
+"""
+
+from __future__ import annotations
+
+import copy
 import logging
-import os
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Tuple
+
 import requests
 
 from loong_memories.reranks.base import BaseRerankProvider
 
 logger = logging.getLogger(__name__)
+
+# 降级时赋予的中立分值，与接口相关性分数同处 0 到 1 区间。
+FALLBACK_SCORE = 0.5
+
 
 
 class QwenReranker(BaseRerankProvider):
@@ -31,17 +45,12 @@ class QwenReranker(BaseRerankProvider):
     api_key_env = "DASHSCOPE_API_KEY"
 
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
-        """
-        使用 Qwen Rerank 接口对候选文档进行重排。
+        """对候选文档重排，返回按相关性降序、携带重排分数的文档副本。
 
-        Args:
-            query: 搜索查询词
-            documents: 待重排的文档列表
-            top_k: 返回的顶部文档数量限制[cite: 3]
-
-        Returns:
-            包含 rerank_score 评分并按相关性降序排序的文档列表[cite: 3]
-        ```
+        query 为空时无法重排，直接按原顺序降级返回。
+        documents 的元素可以是字典，也可以是带 memory 或 text 属性的对象，一律按副本处理。
+        top_k 为返回条数上限，None 表示不截断，小于等于 0 表示不返回。
+        接口失败不抛异常，按原顺序返回并标记 rerank_fallback。
         """
         if not documents:
             return documents
@@ -88,8 +97,8 @@ class QwenReranker(BaseRerankProvider):
             }
         }
 
+        response = None
         try:
-            # 3. 发起请求
             response = requests.post(self.base_url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             res_json = response.json()
@@ -121,14 +130,17 @@ class QwenReranker(BaseRerankProvider):
 
         except Exception as e:
             # 降级容错：若请求失败，记录日志并赋予中立分值返回原文档
-            logger.error("Qwen reranking failed, msg: %s, falling back to original documents order: %s",response.text, e)
+            if response:
+                logger.error("http response:%s",response.text)
+
+            logger.error("Qwen reranking failed, msg: %s, falling back to original documents order:", e)
             fallback_docs = []
             for doc in documents:
                 if isinstance(doc, dict):
                     d = doc.copy()
-                    d['rerank_score'] = 0.5
+                    d['rerank_score'] = FALLBACK_SCORE
                 else:
-                    d = {"text": doc, 'rerank_score': 0.5}
+                    d = {"text": doc, 'rerank_score': FALLBACK_SCORE}
                 fallback_docs.append(d)
 
             if effective_top_k:

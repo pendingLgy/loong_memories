@@ -42,6 +42,7 @@ dependencies = [
   "PyYAML>=6.0.3",
   "pydantic>=2.5",
   "pydantic-settings>=2.1",
+  "requests>=2.31",
 ]
 
 [project.optional-dependencies]
