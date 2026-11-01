@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from loong_memories.core.exceptions import ConfigError, StorageError
 from loong_memories.storage.message.base import BaseDB
 from loong_memories.storage.message.schema import HistoryRecord, Message, get_history_table, get_messages_table
+from loong_memories.util.datetime_util import now_datetime
 from loong_memories.util.snowflake import next_id
 from loong_memories.core.config_db import DBSettings, SQLiteSettings
 
@@ -138,7 +139,7 @@ class DBEngine(BaseDB):
             "role": message.role,
             "content": message.content,
             "name": message.name,
-            "created_at_tz": message.created_at_tz or datetime.now(timezone.utc).isoformat(),
+            "created_at_tz": message.created_at_tz or now_datetime(),
         }
 
     def _to_message(self, row: Dict[str, Any]) -> Message:
@@ -390,7 +391,7 @@ class AsyncDBEngine(DBEngine):
             .limit(limit)
             .subquery()
         )
-        stmt = select(recent).order_by(recent.c.id.desc())
+        stmt = select(recent).order_by(recent.c.id.asc())
         async with self._session() as session:
             result = await session.execute(stmt)
             rows = result.mappings().all()
@@ -460,6 +461,6 @@ def build_database(settings: "DBSettings") -> BaseDB:
 
 def _sqlite_path(settings: "SQLiteSettings") -> str:
     """取 SQLite 库文件路径；未配置时统一报错。"""
-    if not settings.path:
-        raise ConfigError("未配置 SQLite 库文件路径：请设置 db.sqlite.path 或环境变量 RAG_DB__SQLITE__PATH")
-    return settings.path
+    if not settings.db_path:
+        raise ConfigError("未配置 SQLite 库文件路径：请设置 db.sqlite.db_path 或环境变量 RAG_DB__SQLITE__DB_PATH")
+    return settings.db_path

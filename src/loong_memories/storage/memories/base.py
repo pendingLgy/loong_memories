@@ -25,17 +25,20 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Any, ClassVar, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from loong_memories.core.exceptions import StorageError
 from loong_memories.storage.memories.registry_vector import register_vector_store
+from loong_memories.util.numberic_util import str_to_int, str_to_float
 
 # 支持的向量度量类型。
 MetricType = Literal["COSINE", "L2", "IP"]
 
+logger = logging.getLogger(__name__)
 
 class VectorStoreResult(BaseModel):
     """一次检索或读取得到的结果：id、相似度与元数据。"""
@@ -56,10 +59,13 @@ class VectorStoreResult(BaseModel):
 
     @classmethod
     def to_vector_store_result(cls, **kwargs) -> VectorStoreResult:
-        id = int(kwargs.get("id")) if kwargs.get("id") else None
-        tenant_id = int(kwargs.get("tenant_id")) if kwargs.get("tenant_id") else None
-        user_id = int(kwargs.get("user_id")) if kwargs.get("user_id") else None
-        score = float(kwargs.get("score")) if kwargs.get("score") is not None else None
+        try:
+            id = str_to_int(kwargs.get("id"))
+            tenant_id = str_to_int(kwargs.get("tenant_id"))
+            user_id = str_to_int(kwargs.get("user_id"))
+            score = str_to_float(kwargs.get("score"))
+        except Exception as exc:
+            raise StorageError("data cover error" + str(exc)) from exc
 
         return VectorStoreResult(
             id=id,
@@ -146,6 +152,7 @@ class VectorStoreBase(ABC):
              top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
         """列出集合内容（外层列表按既有约定包裹一层）。"""
 
+    @abstractmethod
     def keyword_search(self,
                        query: str,
                        tenant_id: int,
@@ -153,17 +160,6 @@ class VectorStoreBase(ABC):
                        top_k: int = 5,
                        filter: Optional[Dict[str, Any]] = None) -> Optional[List[VectorStoreResult]]:
         """关键字（BM25 或全文）检索；不支持的实现返回 None。"""
-        return None
-
-    def _ensure_datetime(self, val):
-        """确保输入是 datetime 对象，如果是字符串则自动解析，为空则给当前 UTC 时间"""
-        if isinstance(val, datetime):
-            return val
-        if isinstance(val, str):
-            try:
-                return datetime.fromisoformat(val.replace('Z', '+00:00'))
-            except ValueError:
-                pass
         return None
 
     def _build_metadata(self, payloads: Dict[str, Any]):

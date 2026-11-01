@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 from loong_memories.core.exceptions import OptionalDependencyError, StorageError
 from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult
+from loong_memories.util.numberic_util import str_to_int
 
 try:  # 可选依赖：模块仍可导入，缺库时仅在实例化时报错。
     from pymilvus import CollectionSchema, DataType, FieldSchema, Function, FunctionType, MilvusClient
@@ -46,15 +47,7 @@ _MAX_TEXT_LEN = 65535
 logger = logging.getLogger(__name__)
 
 
-def _as_scope_int(value: Any) -> Optional[int]:
-    """作用域标识归一为 INT64：None 与空串视为未设置，无法转整数时告警并丢弃。"""
-    if value is None or value == '':
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        logger.warning('作用域标识需为整数，已忽略 value=%s', value)
-        return None
+
 
 
 class MilvusVectorStore(VectorStoreBase):
@@ -146,8 +139,8 @@ class MilvusVectorStore(VectorStoreBase):
         """组装写入记录：text 优先取 text_lemmatized，回退 data 或 text。"""
         metadata = self._build_metadata(payload)
 
-        tenant_id = _as_scope_int(payload.get("tenant_id"))
-        user_id = _as_scope_int(payload.get("user_id"))
+        tenant_id = str_to_int(payload.get("tenant_id"))
+        user_id = str_to_int(payload.get("user_id"))
         text = payload.get("text") or ""
         text_lemma = payload.get("text_lemma") or payload.get("text") or ""
         updated_at_tz = payload.get("updated_at_tz") or None
@@ -233,7 +226,7 @@ class MilvusVectorStore(VectorStoreBase):
         return results
 
 
-    def _build_id_filter(self, id: int, tenant_id: int, user_id: int | None) -> dict[str, int]:
+    def _build_id_filter(self, id: int, tenant_id: int, user_id: int | None) -> Optional[str]:
         """构建id多条件filter"""
         filter = {
             "id": id,
@@ -408,17 +401,16 @@ class AsyncMilvusVectorStore(MilvusVectorStore):
     backend = "milvus_async"
     metric_type = "COSINE"
 
-    def __init__(
-            self,
-            uri: str = 'http://localhost:19530',
-            token: str = "",
-            collection_name: str = "",
-            vector_size: int = 1024,
-            db_name: str = "",
-            user: str = "",
-            password: str = "",
-            timeout: Optional[float] = None,
-    ) -> None:
+    def __init__(self,
+                 uri: str = 'http://localhost:19530',
+                 token: str = "",
+                 collection_name: str = "",
+                 vector_size: int = 1024,
+                 db_name: str = "",
+                 user: str = "",
+                 password: str = "",
+                 timeout: Optional[float] = None) -> None:
+        super().__init__(uri, token, collection_name, vector_size, db_name, user, password, timeout)
         self.uri = uri
         self.token = token
         self.collection_name = collection_name

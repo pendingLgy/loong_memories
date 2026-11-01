@@ -34,16 +34,17 @@ class MemoryItem(BaseModel):
     # 检索场景下的融合分数；写入与读取场景为 None。
     score: Optional[float] = None
     hash: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at_tz: Optional[str] = None
+    updated_at_tz: Optional[str] = None
     # 作用域标识，来源为显式参数，不接受 metadata 覆盖。
-    user_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    run_id: Optional[str] = None
+    user_id: Optional[int] = None
+    agent_id: Optional[int] = None
+    tenant_id: Optional[int] = None
     actor_id: Optional[str] = None
     role: Optional[str] = None
     # 业务自定义元数据，不含上述核心键。
     metadata: Optional[Dict[str, Any]] = None
+    score_details: Optional[Dict[str, Any]] = None
 
 
 class AddResult(BaseModel):
@@ -53,6 +54,23 @@ class AddResult(BaseModel):
 
     results: List[MemoryItem] = Field(default_factory=list)
 
+class GetResult(BaseModel):
+    """查询记忆"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    results: List[MemoryItem] = Field(default_factory=list)
+
+class PageQueryResult(BaseModel):
+    """分页查询"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    page_num: int = 0
+    page_size: int = 10
+    total_size: int = 0
+
+    results: List[MemoryItem] = Field(default_factory=list)
 
 class SearchResult(BaseModel):
     """检索结果：按融合分数降序排列的记忆条目。"""

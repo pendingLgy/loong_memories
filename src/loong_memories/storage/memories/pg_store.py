@@ -17,11 +17,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from contextlib import contextmanager, asynccontextmanager
 from typing import Any, Dict, Iterator, List, Optional, AsyncIterator
 
 from loong_memories.core.exceptions import OptionalDependencyError, StorageError
 from loong_memories.storage.memories.base import MetricType, VectorStoreBase, VectorStoreResult
+from loong_memories.util.datetime_util import ensure_datetime, now_datetime
+from loong_memories.util.numberic_util import str_to_int
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +54,12 @@ DISKANN_MAX_DIMENSION = 2000
 # 全文检索表达式
 _TEXT_VECTOR = "to_tsvector('simple', text_lemma)"
 
+INT_COLUMNS = {
+    "id", "tenant_id", "user_id"
+}
+
 DIRECT_COLUMNS = {
-    "id", "tenant_id", "user_id", "vector",
+    *INT_COLUMNS, "vector",
     "text", "text_lemma",
     "updated_at_tz", "created_at_tz",
 }
@@ -84,6 +91,15 @@ def _build_sqlalchemy_filter(table: Table, filters: Optional[Dict[str, Any]]) ->
             if isinstance(value, dict):
                 for op, op_val in value.items():
                     col = table.c[key]
+
+                    if key in INT_COLUMNS:
+                        if isinstance(op_val, list):
+                            # 检查列表是否为空，或者是否包含非 int 类型（同时用 not isinstance(..., bool) 排除布尔值）
+                            if not op_val or not all(isinstance(x, int) and not isinstance(x, bool) for x in op_val):
+                                raise ValueError(f'{key} 列表中的值必须全部为 int 类型: {op_val}')
+                        elif isinstance(op_val, int) is False:
+                            raise ValueError(f'{key} 不支持的值类型: {op_val}')
+
                     if op == "eq":
                         conditions.append(col == op_val)
                     elif op == "ne":
@@ -235,10 +251,24 @@ class PGVectorStore(VectorStoreBase):
 
     # ---------------- 辅助方法 ----------------
 
+    def _process_query_expression(self,query: str) -> str:
+        if not query:
+            return ""
+
+        # 1. 清洗非法字符：
+        # \s 已经在白名单中，因此原有的空格、制表符、换行符等空白会完好保留。
+        # 这里去掉了自动合并空格 (r'\s+') 和去除首尾空格 (.strip()) 的逻辑。
+        cleaned = re.sub(r'[^\w\s\u4e00-\u9fa5:&!()\*\|]', '', query)
+
+        # 2. 如果你原本需要将空格替换为 " |"：
+        query_expression = cleaned.replace(" ", " | ")
+
+        return query_expression
+    
     def _build_sql_keyword_search(self, filters: dict[str, Any] | None, query: str, top_k: int) -> Select:
 
         table = self._get_table()
-        query_expression = query.replace(" ", " | ")
+        query_expression = self._process_query_expression(query)
         ts_query = func.to_tsquery('simple', query_expression)
         ts_vector = func.to_tsvector('simple', table.c.text_lemma)
         score_expr = func.ts_rank_cd(ts_vector, ts_query).label("score")
@@ -281,23 +311,25 @@ class PGVectorStore(VectorStoreBase):
                           vectors: list[list[float | int]]) -> list:
         rows = []
 
+        if len(ids) != len(payloads) and len(ids) != len(vectors):
+            raise StorageError("params not match")
+
         for rid, vector, item in zip(ids, vectors, payloads):
-            tenant_id = item.get("tenant_id")
-            user_id = item.get("user_id")
+
+            tenant_id = str_to_int(item.get("tenant_id"))
+            user_id = str_to_int(item.get("user_id"))
             metadata = self._build_metadata(item)
-            updated_at_tz = item.get("updated_at_tz")
             created_at_tz = item.get("created_at_tz")
 
             data = {
                 "id": rid,
-                "tenant_id": int(tenant_id) if tenant_id else None,
-                "user_id": int(user_id) if user_id else None,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
                 "vector": vector,
                 "metadata": metadata,
                 "text": item.get("text"),
                 "text_lemma": item.get("text_lemma"),
-                "updated_at_tz": self._ensure_datetime(updated_at_tz),
-                "created_at_tz": self._ensure_datetime(created_at_tz),
+                "created_at_tz": ensure_datetime(created_at_tz),
             }
 
             rows.append(data)
@@ -323,7 +355,7 @@ class PGVectorStore(VectorStoreBase):
     def _build_sql_update(self, id: int,
                           tenant_id: int, user_id: int | None,
                           payload: dict[str, Any] | None,
-                          vector: list[float | int] | None) -> Update:
+                          vector: list[float | int] | None) -> Update | None:
 
         table = self._get_table()
 
@@ -333,9 +365,9 @@ class PGVectorStore(VectorStoreBase):
         if payload is not None:
             update_data["metadata"] = self._build_metadata(payload)
 
-        update_data["text"] = payload.get("text", None)
-        update_data["text_lemma"] = payload.get("text_lemma", None)
-        update_data["updated_at_tz"] = self._ensure_datetime(payload.get("updated_at_tz"))
+        update_data["text"] = payload.get("text")
+        update_data["text_lemma"] = payload.get("text_lemma")
+        update_data["updated_at_tz"] = now_datetime()
 
         conditions = [
             table.c.id == id,
@@ -349,7 +381,7 @@ class PGVectorStore(VectorStoreBase):
         stmt = update(table).where(and_(*conditions)).values(**update_data)
         return stmt
 
-    def _build_sql_get(self, id: int, tenant_id: int, user_id: int | None,) -> Select[Any, Any, Any, Any, Any, Any, Any, Any] | Select[*tuple[Any, ...]]:
+    def _build_sql_get(self, id: int, tenant_id: int, user_id: int | None,) -> Select:
         table = self._get_table()
 
         conditions = [
@@ -408,15 +440,76 @@ class PGVectorStore(VectorStoreBase):
             self.metadata_obj,
             Column("id", BigInteger, primary_key=True),
             Column("tenant_id", BigInteger, nullable=False),
-            Column("user_id", BigInteger, nullable=False),
-            Column("vector", Vector(self.vector_size)),
-            Column("metadata", JSONB),
-            Column("text", Text),
-            Column("text_lemma", Text),
-            Column("updated_at_tz", TIMESTAMP(timezone=True)),
-            Column("created_at_tz", TIMESTAMP(timezone=True)),
-            extend_existing=True
+            Column("user_id", BigInteger, nullable=True),
+            Column("vector", Vector(self.vector_size), nullable=False),
+            Column("metadata", JSONB, nullable=True),
+            Column("text", Text, nullable=False),
+            Column("text_lemma", Text, nullable=False),
+            Column("updated_at_tz", TIMESTAMP(timezone=True), nullable=True),
+            Column("created_at_tz", TIMESTAMP(timezone=True), nullable=False),
         )
+
+    def _normalize_vector_cosine_score(self, distance: float) -> float:
+        """
+        将 PostgreSQL 的余弦距离 (<=>) 转换为余弦相似度
+        距离 0 -> 相似度 1.0 (完全相同)
+        距离 2 -> 相似度 0.0 (完全相反)
+        """
+        if distance is None:
+            return 0.0
+
+        # 确保距离被限制在 [0, 2] 范围内，防止因浮点数误差或异常值导致越界
+        safe_distance = max(0.0, min(2.0, float(distance)))
+
+        # 将 [0, 2] 的余弦距离线性映射为 [1, 0] 的余弦相似度
+        similarity = 1.0 - (safe_distance / 2.0)
+
+        # 加上双重边界保护，确保最终返回值严格在 [0.0, 1.0] 之间
+        return max(0.0, min(1.0, similarity))
+
+    def _normalize_bm25_unbounded_score(self, raw_score: float) -> float:
+        """无上限正向评分归一化：将 [0, +inf) 映射到 [0, 1)"""
+        if raw_score is None or raw_score <= 0:
+            return 0.0
+        return raw_score / (1.0 + raw_score)
+
+    def _parse_keysearch(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
+        # 将时间字段转换为字符串（若存在且不为 None）
+        if row_dict.get("created_at_tz") is not None:
+            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
+
+        if row_dict.get("updated_at_tz") is not None:
+            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
+
+        score = row_dict["score"] if row_dict.get("score") is not None else 0.0
+        # row_dict["score"] = self._normalize_bm25_unbounded_score(score)
+
+        store = VectorStoreResult.to_vector_store_result(**row_dict)
+        return store
+
+    def _parse_search_result(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
+        # 将时间字段转换为字符串（若存在且不为 None）
+        if row_dict.get("created_at_tz") is not None:
+            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
+
+        if row_dict.get("updated_at_tz") is not None:
+            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
+
+        score = row_dict["score"] if row_dict.get("score") is not None else 2.0
+        row_dict["score"] = self._normalize_vector_cosine_score(score)
+
+        store = VectorStoreResult.to_vector_store_result(**row_dict)
+        return store
+
+    def _parse(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
+        # 将时间字段转换为字符串（若存在且不为 None）
+        if row_dict.get("created_at_tz") is not None:
+            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
+
+        if row_dict.get("updated_at_tz") is not None:
+            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
+        store = VectorStoreResult.to_vector_store_result(**row_dict)
+        return store
 
     @contextmanager
     def _session(self) -> Iterator[Session]:
@@ -468,62 +561,9 @@ class PGVectorStore(VectorStoreBase):
                 text(f"CREATE INDEX IF NOT EXISTS {safe_name}_text_idx ON {safe_name} USING gin ({_TEXT_VECTOR})"))
 
             conn.execute(
-                text(f"CREATE INDEX IF NOT EXISTS {safe_name}_metadata_gin_idx ON vut_vectors USING gin (metadata)"))
+                text(f"CREATE INDEX IF NOT EXISTS {safe_name}_metadata_gin_idx ON {safe_name} USING gin (metadata)"))
 
-    def _normalize_cosine_score(self, distance: float) -> float:
-        """
-        将 PostgreSQL 的余弦距离 (<=>) 转换为余弦相似度
-        距离 0 -> 相似度 1.0 (完全相同)
-        距离 2 -> 相似度 0.0 (完全相反)
-        """
-        # 理论上余弦距离在 [0, 2]，转换为 [0, 1] 的相似度
-        similarity = 1.0 - (distance / 2.0)
-        # 加上边界保护，防止浮点数精度误差导致越界
-        return max(0.0, min(1.0, similarity))
 
-    def _normalize_unbounded_score(self, raw_score: float) -> float:
-        """无上限正向评分归一化：将 [0, +inf) 映射到 [0, 1)"""
-        if raw_score <= 0:
-            return 0.0
-        return raw_score / (1.0 + raw_score)
-
-    def _parse_keysearch(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
-        # 将时间字段转换为字符串（若存在且不为 None）
-        if row_dict.get("created_at_tz") is not None:
-            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
-
-        if row_dict.get("updated_at_tz") is not None:
-            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
-
-        score = row_dict["score"] if row_dict.get("score") is not None else 0.0
-        row_dict["score"] = self._normalize_unbounded_score(score)
-
-        store = VectorStoreResult.to_vector_store_result(**row_dict)
-        return store
-
-    def _parse_search(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
-        # 将时间字段转换为字符串（若存在且不为 None）
-        if row_dict.get("created_at_tz") is not None:
-            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
-
-        if row_dict.get("updated_at_tz") is not None:
-            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
-
-        score = row_dict["score"] if row_dict.get("score") is not None else 2.0
-        row_dict["score"] = self._normalize_cosine_score(score)
-
-        store = VectorStoreResult.to_vector_store_result(**row_dict)
-        return store
-
-    def _parse(self, row_dict: Dict[str, Any]) -> VectorStoreResult:
-        # 将时间字段转换为字符串（若存在且不为 None）
-        if row_dict.get("created_at_tz") is not None:
-            row_dict["created_at_tz"] = row_dict["created_at_tz"].isoformat()
-
-        if row_dict.get("updated_at_tz") is not None:
-            row_dict["updated_at_tz"] = row_dict["updated_at_tz"].isoformat()
-        store = VectorStoreResult.to_vector_store_result(**row_dict)
-        return store
 
     # ---------------- 写入与检索 ----------------
 
@@ -555,7 +595,7 @@ class PGVectorStore(VectorStoreBase):
         results: List[VectorStoreResult] = []
         for row in rows:
             row_dict = row._asdict()
-            results.append(self._parse_search(row_dict))
+            results.append(self._parse_search_result(row_dict))
         return results
 
     def keyword_search(self,
@@ -573,11 +613,7 @@ class PGVectorStore(VectorStoreBase):
             with self._session() as session:
                 rows = session.execute(stmt).fetchall()
         except Exception as _exc:
-            import traceback
-            # 获取完整的堆栈字符串
-            error_msg = traceback.format_exc()
-            logger.error(f"操作执行失败，详细堆栈信息如下：\n{error_msg}")
-            return None
+            raise _exc
 
         results: List[VectorStoreResult] = []
         for row in rows:
@@ -618,7 +654,7 @@ class PGVectorStore(VectorStoreBase):
             row = session.execute(stmt).fetchone()
         if not row:
             return None
-        return self._parse_search(row._asdict())
+        return self._parse(row._asdict())
 
 
     def list(self,
@@ -795,7 +831,7 @@ class AsyncPGVectorStore(PGVectorStore):
             await conn.execute(
                 text(f"CREATE INDEX IF NOT EXISTS {safe_name}_text_idx ON {safe_name} USING gin ({_TEXT_VECTOR})"))
             await conn.execute(
-                text(f"CREATE INDEX IF NOT EXISTS {safe_name}_metadata_gin_idx ON vut_vectors USING gin (metadata)"))
+                text(f"CREATE INDEX IF NOT EXISTS {safe_name}_metadata_gin_idx ON {safe_name} USING gin (metadata)"))
 
     async def insert(self,
                      vectors: List[List[float]],
@@ -825,7 +861,7 @@ class AsyncPGVectorStore(PGVectorStore):
         results: List[VectorStoreResult] = []
         for row in rows:
             row_dict = row._asdict()
-            results.append(self._parse_search(row_dict))
+            results.append(self._parse_search_result(row_dict))
 
         return results
 
@@ -843,10 +879,8 @@ class AsyncPGVectorStore(PGVectorStore):
             async with self._session() as session:
                 result = await session.execute(stmt)
                 rows = result.fetchall()
-        except Exception:
-            import traceback
-            logger.error(f"异步全文检索执行失败：\n{traceback.format_exc()}")
-            return None
+        except Exception as exc:
+            raise exc
 
         results: List[VectorStoreResult] = []
         for row in rows:

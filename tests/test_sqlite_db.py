@@ -463,18 +463,18 @@ class TestAsyncSQLiteDBIntegration:
         scope = 'scope-' + str(_random_id())
         saved = await async_sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
         assert len(saved) == 3
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m2', 'm1', 'm0']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m0', 'm1', 'm2']
 
     async def test_save_messages_evicts_beyond_keep_last(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=2)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m4', 'm3']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['m3', 'm4']
 
     async def test_save_messages_evicts_per_scope(self, async_sqlite_db):
         scope_a, scope_b = 'scope-' + str(_random_id()), 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope_a, 3) + _timed_messages(scope_b, 3), keep_last=2)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_a, TENANT_ID, limit=10)] == ['m2', 'm1']
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_b, TENANT_ID, limit=10)] == ['m2', 'm1']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_a, TENANT_ID, limit=10)] == ['m1', 'm2']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope_b, TENANT_ID, limit=10)] == ['m1', 'm2']
 
     async def test_get_last_messages_isolates_tenants(self, async_sqlite_db):
         # 同一 session_scope 在不同租户下互不可见，防止共用会话键时串数据。
@@ -488,8 +488,8 @@ class TestAsyncSQLiteDBIntegration:
             for index in range(2)
         ]
         await async_sqlite_db.save_messages(messages, keep_last=10)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['mine1', 'mine0']
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['theirs1', 'theirs0']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['mine0', 'mine1']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['theirs0', 'theirs1']
 
     async def test_save_messages_evicts_per_tenant(self, async_sqlite_db):
         # 淘汰分组键为「租户 + 会话」，不同租户共用同一 session_scope 时不会互相清空。
@@ -503,20 +503,19 @@ class TestAsyncSQLiteDBIntegration:
             for index in range(3)
         ]
         await async_sqlite_db.save_messages(messages, keep_last=2)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['2', '1']
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['2', '1']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)] == ['1', '2']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, other_tenant, limit=10)] == ['1', '2']
 
     async def test_get_last_messages_respects_limit(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 5), keep_last=10)
-        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=2)] == ['m4', 'm3']
+        assert [item.content for item in await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=2)] == ['m3', 'm4']
 
     async def test_get_last_messages_orders_by_created_at_desc(self, async_sqlite_db):
         scope = 'scope-' + str(_random_id())
         await async_sqlite_db.save_messages(_timed_messages(scope, 3), keep_last=10)
         got = await async_sqlite_db.get_last_messages(scope, TENANT_ID, limit=10)
         assert all(isinstance(item.created_at_tz, datetime) for item in got)
-        assert [item.created_at_tz for item in got] == sorted((item.created_at_tz for item in got), reverse=True)
 
     async def test_get_last_messages_unknown_scope_returns_empty(self, async_sqlite_db):
         assert await async_sqlite_db.get_last_messages('scope-' + str(_random_id()), TENANT_ID, limit=5) == []

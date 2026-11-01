@@ -120,6 +120,8 @@ def score_and_rank(
 
         scored_result = {
             "id": mem_id,
+            "tenant_id": result.get("tenant_id"),
+            "user_id": result.get("user_id"),
             "score": combined,
             "payload": result.get("payload"),
         }

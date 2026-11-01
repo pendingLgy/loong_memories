@@ -34,10 +34,10 @@ def pytest_addoption(parser):
         help='运行真实调用外部服务的集成测试',
     )
     parser.addoption(
-        '--eval',
+        '--integration_ai',
         action='store_true',
         default=False,
-        help='评分用例：真实调用 Milvus 与 PG 完成写入与回查',
+        help='运行真实外部服务与LLM的集成测试',
     )
 
 
@@ -45,6 +45,7 @@ def pytest_configure(config):
     '''注册本仓库使用的自定义标记，避免 PytestUnknownMarkWarning。'''
     config.addinivalue_line('markers', 'unit: 不依赖外部服务的单元测试')
     config.addinivalue_line('markers', 'integration: 需要真实外部服务的集成测试')
+    config.addinivalue_line('markers', 'integration_ai: 需要真实外部服务与LLM的集成测试')
 
 
 # ---------- JSON 配置：公共工具 ----------

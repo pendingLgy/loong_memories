@@ -138,9 +138,14 @@ class QwenReranker(BaseRerankProvider):
             for doc in documents:
                 if isinstance(doc, dict):
                     d = doc.copy()
-                    d['rerank_score'] = FALLBACK_SCORE
+                    d['score'] = FALLBACK_SCORE
                 else:
-                    d = {"text": doc, 'rerank_score': FALLBACK_SCORE}
+                    d = {"text": doc, 'score': FALLBACK_SCORE}
+
+                    if d.get("score_details"):
+                        d.get("score_details")['rerank_score'] = FALLBACK_SCORE
+                        d.get("score_details")['rerank_fail'] = True
+
                 fallback_docs.append(d)
 
             if effective_top_k:

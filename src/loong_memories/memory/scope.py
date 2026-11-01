@@ -31,9 +31,9 @@ from loong_memories.core.exceptions import DataError
 logger = logging.getLogger(__name__)
 
 # 可用于作用域的实体参数。
-ENTITY_PARAMS = frozenset({"user_id", "agent_id", "run_id"})
+ENTITY_PARAMS = frozenset({"user_id", "agent_id", "tenant_id"})
 # 不可经 metadata 设置的身份键：三个实体 ID 加上 actor_id。
-IDENTITY_KEYS = ENTITY_PARAMS | {"actor_id"}
+IDENTITY_KEYS = ENTITY_PARAMS
 
 
 def validate_entity_id(value: Optional[Any], name: str) -> Optional[str]:
@@ -75,7 +75,7 @@ def build_scope(
     *,
     user_id: Optional[Any] = None,
     agent_id: Optional[Any] = None,
-    run_id: Optional[Any] = None,
+    tenant_id: Optional[Any] = None,
     metadata: Optional[Dict[str, Any]] = None,
     filters: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -86,13 +86,13 @@ def build_scope(
 
     user_id = validate_entity_id(user_id, "user_id")
     agent_id = validate_entity_id(agent_id, "agent_id")
-    run_id = validate_entity_id(run_id, "run_id")
+    tenant_id = validate_entity_id(tenant_id, "tenant_id")
 
     provided = []
     values = {
         "user_id": user_id,
         "agent_id": agent_id,
-        "run_id": run_id,
+        "tenant_id": tenant_id,
     }
     for name, value in values.items():
         if value:
@@ -101,7 +101,7 @@ def build_scope(
             provided.append(name)
 
     if not provided:
-        raise DataError("user_id、agent_id、run_id 至少提供一个")
+        raise DataError("user_id、agent_id、tenant_id 至少提供一个")
     return payload, query
 
 

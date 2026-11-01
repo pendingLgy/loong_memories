@@ -22,21 +22,43 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from loong_memories.memory.models import AddResult, DeleteResult, SearchResult, UpdateResult
+from loong_memories.memory.models import AddResult, DeleteResult, SearchResult, UpdateResult, GetResult, PageQueryResult
 
 
 class MemoryBase(ABC):
     """记忆层统一接口：写入、检索、更新、删除。"""
 
     @abstractmethod
+    def get(
+            self,
+            *,
+            memory_id: Any,
+            user_id: int,
+            tenant_id: int
+    ) -> GetResult:
+        """获取记忆"""
+
+    @abstractmethod
+    def page_query(
+        self,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: int,
+        tenant_id: int,
+        page_num: int = 0,
+        page_size: int = 10
+    ) -> PageQueryResult:
+        """分页查询记忆"""
+
+    @abstractmethod
     def add(
             self,
             messages: Any,
             *,
-            user_id: Optional[Any] = None,
+            user_id: int,
+            tenant_id: int,
             agent_id: Optional[Any] = None,
-            run_id: Optional[Any] = None,
-            metadata: Optional[Dict[str, Any]] = None,
+            metadata: Dict[str, Any] = None,
     ) -> AddResult:
         """把对话或文本写入记忆，返回本次新增的条目。"""
 
@@ -48,6 +70,8 @@ class MemoryBase(ABC):
             filters: Optional[Dict[str, Any]] = None,
             top_k: Optional[int] = None,
             threshold: Optional[float] = None,
+            rerank: bool = False,
+            explain: bool = False,
     ) -> SearchResult:
         """语义与关键词双路召回，融合排序后返回带分数的条目。"""
 

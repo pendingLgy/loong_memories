@@ -23,6 +23,8 @@ from __future__ import annotations
 class BaseError(Exception):
     """所有领域异常的基类。"""
 
+class ParserError(Exception):
+    """转换异常。"""
 
 class ConfigError(BaseError):
     """配置缺失或非法。"""
