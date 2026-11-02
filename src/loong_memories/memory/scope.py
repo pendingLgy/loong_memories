@@ -27,13 +27,10 @@ from copy import deepcopy
 from typing import Any, Dict, Optional, Tuple
 
 from loong_memories.core.exceptions import DataError
+from loong_memories.storage.memories.base import METADATA_REMOVE_KEYS, SESSION_PARAMS
 
 logger = logging.getLogger(__name__)
 
-# 可用于作用域的实体参数。
-ENTITY_PARAMS = frozenset({"user_id", "agent_id", "tenant_id"})
-# 不可经 metadata 设置的身份键：三个实体 ID 加上 actor_id。
-IDENTITY_KEYS = ENTITY_PARAMS
 
 
 def validate_entity_id(value: Optional[Any], name: str) -> Optional[str]:
@@ -51,7 +48,7 @@ def validate_entity_id(value: Optional[Any], name: str) -> Optional[str]:
     return trimmed
 
 
-def strip_identity_keys(
+def update_metadata_keys(
     metadata: Optional[Dict[str, Any]],
     existing: Optional[Dict[str, Any]] = None,
     *,
@@ -62,7 +59,7 @@ def strip_identity_keys(
         return {}
     clean: Dict[str, Any] = {}
     for key, value in metadata.items():
-        if key not in IDENTITY_KEYS:
+        if key not in METADATA_REMOVE_KEYS:
             clean[key] = value
             continue
         if existing is not None and value == existing.get(key):
@@ -71,38 +68,31 @@ def strip_identity_keys(
     return clean
 
 
-def build_scope(
-    *,
-    user_id: Optional[Any] = None,
+def build_new_metadata(
     agent_id: Optional[Any] = None,
-    tenant_id: Optional[Any] = None,
     metadata: Optional[Dict[str, Any]] = None,
     filters: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """构造「存储用 payload 模板」与「查询用 filters」；至少需要一个实体 ID。"""
     # 身份范围只由实体参数决定，先剥离调用方 metadata 中的同名键。
-    payload: Dict[str, Any] = strip_identity_keys(metadata, None, context="add")
+    new_metadata: Dict[str, Any] = update_metadata_keys(metadata, None, context="add")
     query: Dict[str, Any] = deepcopy(filters) if filters else {}
 
-    user_id = validate_entity_id(user_id, "user_id")
     agent_id = validate_entity_id(agent_id, "agent_id")
-    tenant_id = validate_entity_id(tenant_id, "tenant_id")
 
     provided = []
     values = {
-        "user_id": user_id,
         "agent_id": agent_id,
-        "tenant_id": tenant_id,
     }
     for name, value in values.items():
         if value:
-            payload[name] = value
+            new_metadata[name] = value
             query[name] = value
             provided.append(name)
 
-    if not provided:
-        raise DataError("user_id、agent_id、tenant_id 至少提供一个")
-    return payload, query
+    # if not provided:
+    #     raise DataError("user_id、agent_id、tenant_id 至少提供一个")
+    return new_metadata, query
 
 
 def escape_scope_value(value: Any) -> str:
@@ -113,7 +103,7 @@ def escape_scope_value(value: Any) -> str:
 def session_scope(filters: Dict[str, Any]) -> str:
     """按实体 ID 生成确定性会话键，供消息表归组。"""
     parts = []
-    for name in sorted(ENTITY_PARAMS):
+    for name in sorted(SESSION_PARAMS):
         value = filters.get(name)
         if value:
             parts.append(name + "=" + escape_scope_value(value))

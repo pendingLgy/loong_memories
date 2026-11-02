@@ -59,7 +59,7 @@ class GetResult(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    results: List[MemoryItem] = Field(default_factory=list)
+    result: Optional[MemoryItem] = None
 
 class PageQueryResult(BaseModel):
     """分页查询"""

@@ -326,8 +326,8 @@ class TestMemoryStoreSync:
                               text='向量检索正文', score=3.0, metadata={})
         ]
 
-        results = store.recall('向量检索正文', TENANT_ID, [0.1] * VECTOR_SIZE,
-                               {'user_id': USER_ID}, 5, explain=True,user_id=USER_ID)
+        results = store.recall('向量检索正文', TENANT_ID, USER_ID, vector=[0.1] * VECTOR_SIZE,
+                               filter={'user_id': USER_ID}, top_k=5, explain=True)
 
         assert len(results) == 1
         assert results[0]['id'] == 1
@@ -356,7 +356,7 @@ class TestMemoryStoreSync:
         ]
         vector.keyword_search.side_effect = RuntimeError('keyword down')
 
-        results = store.recall('仅语义命中', TENANT_ID, [0.1] * VECTOR_SIZE, {}, 5)
+        results = store.recall('仅语义命中', TENANT_ID, top_k=5, vector = [0.1] * VECTOR_SIZE, filter={})
 
         assert [item['id'] for item in results] == [1]
 
@@ -370,7 +370,7 @@ class TestMemoryStoreSync:
             VectorStoreResult(id=1, tenant_id=TENANT_ID, text='仅语义', score=0.9, metadata={})
         ]
 
-        results = store.recall('仅语义', TENANT_ID, [0.1] * VECTOR_SIZE, {}, 5)
+        results = store.recall('仅语义', TENANT_ID, top_k=5, vector =[0.1] * VECTOR_SIZE, filter={})
 
         assert [item['id'] for item in results] == [1]
 
@@ -379,7 +379,7 @@ class TestMemoryStoreSync:
         vector.search.side_effect = RuntimeError('search down')
 
         with pytest.raises(StorageError, match='语义检索失败'):
-            store.recall('任意查询', TENANT_ID, [0.1] * VECTOR_SIZE, {}, 5)
+            store.recall('任意查询', TENANT_ID, top_k=5, vector = [0.1] * VECTOR_SIZE, filter={})
 
     def test_supports_keyword_reflects_override(self, store_deps):
         store, vector, db = store_deps
@@ -420,7 +420,6 @@ class TestPayloadHelpers:
         split = split_payload(payload)
 
         # 提升键进入顶层
-        assert split['user_id'] == USER_ID
         assert split['actor_id'] == 'actor-1'
         # 核心键不进入结果
         assert 'text' not in split
@@ -554,8 +553,8 @@ class TestAsyncMemoryStore:
                               text='异步检索正文', score=3.0, metadata={})
         ]
 
-        results = await store.recall('异步检索正文', TENANT_ID, [0.1] * VECTOR_SIZE,
-                                     {'user_id': USER_ID}, 5, explain=True,user_id=USER_ID)
+        results = await store.recall('异步检索正文', TENANT_ID, user_id=USER_ID, vector= [0.1] * VECTOR_SIZE, top_k=5,
+                                     filter={'user_id': USER_ID}, explain=True)
 
         assert len(results) == 1
         assert results[0]['memory'] == '异步检索正文'
@@ -574,7 +573,7 @@ class TestAsyncMemoryStore:
         ]
         vector.keyword_search.side_effect = RuntimeError('keyword down')
 
-        results = await store.recall('仅语义', TENANT_ID, [0.1] * VECTOR_SIZE, {}, 5)
+        results = await store.recall('仅语义', TENANT_ID, top_k=5, vector= [0.1] * VECTOR_SIZE, filter={})
 
         assert [item['id'] for item in results] == [1]
 
@@ -583,7 +582,7 @@ class TestAsyncMemoryStore:
         vector.search.side_effect = RuntimeError('search down')
 
         with pytest.raises(StorageError, match='语义检索失败'):
-            await store.recall('任意查询', TENANT_ID, [0.1] * VECTOR_SIZE, {}, 5)
+            await store.recall('任意查询', TENANT_ID,vector= [0.1] * VECTOR_SIZE, top_k=5, filter={})
 
 
 # ---------- 第二部分：正式数据库集成测试（Integration） ----------

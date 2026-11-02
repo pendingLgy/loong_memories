@@ -38,6 +38,13 @@ from loong_memories.util.numberic_util import str_to_int, str_to_float
 # 支持的向量度量类型。
 MetricType = Literal["COSINE", "L2", "IP"]
 
+MEMORY_TABLE_COLUMNS = ("id", "tenant_id", "user_id", "vectors", "metadata", "text", "text_lemma", "created_at_tz", "updated_at_tz")
+MEMORY_TABLE_WITHOUT_VECTOR_COLUMNS = ("id", "tenant_id", "user_id", "metadata", "text", "text_lemma", "created_at_tz", "updated_at_tz")
+
+METADATA_REMOVE_KEYS = {"tenant_id", "user_id", "text", "text_lemma", "updated_at_tz", "created_at_tz"}
+
+SESSION_PARAMS = frozenset({"agent_id"})
+
 logger = logging.getLogger(__name__)
 
 class VectorStoreResult(BaseModel):
@@ -163,11 +170,10 @@ class VectorStoreBase(ABC):
         return None
 
     def _build_metadata(self, payloads: Dict[str, Any]):
-        keys_to_remove = {"text", "text_lemma", "updated_at_tz", "created_at_tz"}
 
         metadata = {
             k: v for k, v in (payloads or {}).items()
-            if k not in keys_to_remove
+            if k not in METADATA_REMOVE_KEYS
         }
 
         return metadata

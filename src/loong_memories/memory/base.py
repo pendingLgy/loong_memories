@@ -31,22 +31,21 @@ class MemoryBase(ABC):
     @abstractmethod
     def get(
             self,
-            *,
             memory_id: Any,
-            user_id: int,
-            tenant_id: int
+            tenant_id: int,
+            user_id: Optional[int] = None,
     ) -> GetResult:
         """获取记忆"""
 
     @abstractmethod
     def page_query(
         self,
-        *,
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: int,
         tenant_id: int,
+        user_id: Optional[int] = None,
         page_num: int = 0,
-        page_size: int = 10
+        page_size: int = 10,
+        *,
+        filter: Optional[Dict[str, Any]] = None
     ) -> PageQueryResult:
         """分页查询记忆"""
 
@@ -54,9 +53,9 @@ class MemoryBase(ABC):
     def add(
             self,
             messages: Any,
-            *,
-            user_id: int,
             tenant_id: int,
+            user_id: int | None = None,
+            *,
             agent_id: Optional[Any] = None,
             metadata: Dict[str, Any] = None,
     ) -> AddResult:
@@ -64,14 +63,16 @@ class MemoryBase(ABC):
 
     @abstractmethod
     def search(
-            self,
-            query: str,
-            *,
-            filters: Optional[Dict[str, Any]] = None,
-            top_k: Optional[int] = None,
-            threshold: Optional[float] = None,
-            rerank: bool = False,
-            explain: bool = False,
+        self,
+        query: str,
+        tenant_id: int,
+        user_id: Optional[int] = None,
+        *,
+        filter: Optional[Dict[str, Any]] = None,
+        top_k: Optional[int] = None,
+        threshold: Optional[float] = None,
+        rerank: bool = False,
+        explain: bool = False,
     ) -> SearchResult:
         """语义与关键词双路召回，融合排序后返回带分数的条目。"""
 
@@ -79,11 +80,17 @@ class MemoryBase(ABC):
     def update(
             self,
             memory_id: int,
+            tenant_id: int,
+            user_id: int | None = None,
+            *,
             text: Optional[str] = None,
             metadata: Optional[Dict[str, Any]] = None,
     ) -> UpdateResult:
         """更新正文或元数据；正文变化时重算向量。"""
 
     @abstractmethod
-    def delete(self, memory_id: int) -> DeleteResult:
+    def delete(self,
+               memory_id: int,
+               tenant_id: int,
+               user_id: int | None = None) -> DeleteResult:
         """删除记忆：向量库物理删除，历史表留审计。"""

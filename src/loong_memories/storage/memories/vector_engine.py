@@ -179,8 +179,8 @@ class VectorEngine:
         return self._store_base.get(vector_id, tenant_id, user_id=user_id)
 
     def list(self, tenant_id: int, user_id: Optional[int] = None,
-             filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
-        return self._store_base.list(tenant_id, user_id=user_id, filter=filters, top_k=top_k) or []
+             filter: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> List[VectorStoreResult]:
+        return self._store_base.list(tenant_id, user_id=user_id, filter=filter, top_k=top_k) or []
 
 
     # ---------------- 内部实现 ----------------
@@ -309,9 +309,12 @@ class AsyncVectorEngine(VectorEngine):
         return await self._store_base.get(vector_id, tenant_id, user_id=user_id)
 
 
-    async def list(self, tenant_id: int, user_id: Optional[int] = None,
-                   filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
-        return await self._store_base.list(tenant_id, user_id=user_id, filter=filters, top_k=top_k) or []
+    async def list(self,
+                   tenant_id: int,
+                   user_id: Optional[int] = None,
+                   filter: Optional[Dict[str, Any]] = None,
+                   top_k: Optional[int] = None) -> Optional[List[VectorStoreResult]]:
+        return await self._store_base.list(tenant_id, user_id=user_id, filter=filter, top_k=top_k) or []
 
 
 def create_vector_engine(

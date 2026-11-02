@@ -436,7 +436,7 @@ class TestVectorEngineIntegration:
                       payloads=[_payload(tenant_a, None) for _ in range(2)], ids=[rid_a1, rid_a2])
         engine.insert([_vector(_random_seed())],
                       payloads=[_payload(tenant_b, None)], ids=[rid_b])
-        got = sorted(row.id for row in engine.list(tenant_a, filters=_scope(tenant_a)))
+        got = sorted(row.id for row in engine.list(tenant_a, filter=_scope(tenant_a)))
         assert got == sorted([rid_a1, rid_a2])
 
     def test_list_without_filter_keeps_tenant_condition(self, engine):
@@ -452,7 +452,7 @@ class TestVectorEngineIntegration:
         ids = [_next_id() for _ in range(4)]
         engine.insert([_vector(_random_seed()) for _ in ids],
                       payloads=[_payload(tenant_id, None) for _ in ids], ids=ids)
-        assert len(engine.list(tenant_id, filters=_scope(tenant_id), top_k=2)) == 2
+        assert len(engine.list(tenant_id, filter=_scope(tenant_id), top_k=2)) == 2
 
     def test_update_changes_payload(self, engine):
         tenant_id, rid, user_id = _next_id(), _next_id(), _next_id()
@@ -562,7 +562,7 @@ class TestAsyncVectorEngineIntegration:
         ids = [_next_id() for _ in range(2)]
         await async_engine.insert([_vector(_random_seed()) for _ in ids],
                                   payloads=[_payload(tenant_id, None) for _ in ids], ids=ids)
-        got = await async_engine.list(tenant_id, filters=_scope(tenant_id))
+        got = await async_engine.list(tenant_id, filter=_scope(tenant_id))
         assert sorted(row.id for row in got) == sorted(ids)
 
     async def test_update_changes_payload(self, async_engine):

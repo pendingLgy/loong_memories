@@ -67,7 +67,7 @@ def to_vector_id_int(vector_id: Any) -> Optional[int]:
     except (TypeError, ValueError):
         return None
 
-def build_payload(text: str, scope: Dict[str, Any], created_at: Optional[str] = None) -> Dict[str, Any]:
+def build_payload(text: str, new_metadata: Dict[str, Any], created_at: Optional[str] = None) -> Dict[str, Any]:
     """组装写入 payload：核心键由本函数负责，作用域由 scope 提供。"""
     stamp = created_at or now_iso()
 
@@ -80,7 +80,7 @@ def build_payload(text: str, scope: Dict[str, Any], created_at: Optional[str] = 
         "created_at_tz": stamp,
         "updated_at_tz": None,
     }
-    payload.update({key: value for key, value in scope.items() if value})
+    payload.update({key: value for key, value in new_metadata.items() if value})
     return payload
 
 
@@ -89,7 +89,7 @@ def split_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     data = dict(payload or {})
     promoted = {
         key: data.get(key)
-        for key in ("user_id", "agent_id", "run_id", "actor_id", "role")
+        for key in ("agent_id", "run_id", "actor_id", "role")
         if data.get(key) is not None
     }
     extra = {key: value for key, value in data.items() if key not in CORE_KEYS and key not in promoted}
@@ -310,14 +310,21 @@ class MemoryStore:
             return []
         return [{"role": message.role, "content": message.content} for message in messages]
 
-    def recall(self, query: str, tenant_id: int, vector: List[float], filter: Dict[str, Any], top_k: int,
-               threshold: float = 0.1, explain: bool = False,
-               user_id: Optional[int] = None) -> List[Dict[str,Any]]:
+    def recall(self,
+               query: str,
+               tenant_id: int,
+               user_id: Optional[int] = None,
+               *,
+               vector: List[float],
+               filter: Optional[Dict[str, Any]] = None,
+               top_k: int = 5,
+               threshold: float = 0.1,
+               explain: bool = False) -> List[Dict[str,Any]]:
         """双路召回, 打分："""
 
         internal_limit = max(top_k * 4, 60)
         try:
-            semantic_results = list(self.vector_engine.search(query, vector,tenant_id, user_id, internal_limit, filter) or [])
+            semantic_results = list(self.vector_engine.search(query, vector, tenant_id, user_id, internal_limit, filter) or [])
         except Exception as exc:
             raise StorageError("语义检索失败") from exc
 
@@ -345,11 +352,13 @@ class MemoryStore:
 
         candidates = []
         for mem in semantic_results:
-            payload = {**mem.model_dump(exclude_none=True,exclude={"metadata"}), **mem.metadata}
+            payload = {**mem.model_dump(exclude_none=True,exclude={"metadata"}), **(mem.metadata or {})}
 
             mem_id = mem.id
             candidates.append({
                 "id": mem_id,
+                "tenant_id": mem.tenant_id,
+                "user_id": mem.user_id,
                 "score": mem.score,
                 "payload": payload,
             })
@@ -517,14 +526,17 @@ class AsyncMemoryStore(MemoryStore):
             return []
         return [{"role": message.role, "content": message.content} for message in messages]
 
-    async def recall(self, query: str,
-                     tenant_id: int,
-                     vector: List[float],
-                     filter: Dict[str, Any],
-                     top_k: int,
-                     threshold: float = 0.1,
-                     explain: bool = False,
-                     user_id: Optional[int] = None) -> List[Dict[str,Any]]:
+    async def recall(self,
+            query: str,
+            tenant_id: int,
+            user_id: Optional[int] = None,
+            *,
+            vector: List[float],
+            filter: Optional[Dict[str, Any]] = None,
+            top_k: int = 5,
+            threshold: float = 0.1,
+            explain: bool = False
+            ) -> List[Dict[str,Any]]:
         """双路召回, 打分："""
 
         internal_limit = max(top_k * 4, 60)
@@ -558,7 +570,7 @@ class AsyncMemoryStore(MemoryStore):
 
         candidates = []
         for mem in semantic_results:
-            payload = {**mem.model_dump(exclude_none=True, exclude={"metadata"}), **mem.metadata}
+            payload = {**mem.model_dump(exclude_none=True, exclude={"metadata"}), **(mem.metadata or {})}
 
             mem_id = mem.id
             candidates.append({
