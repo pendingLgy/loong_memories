@@ -84,7 +84,7 @@ Windows 控制台代码页为 936。写文件统一 `encoding=` 指定 utf-8 并
 
 约束细节：
 
-- 注册表模块（`registry_*.py`）只登记与解析，不实例化、不持有状态；实例化只发生在 `llm_handler.py`、`embedder_handler.py`、`rerank_handler.py`、`vector_engine.py` 与 `db_engine.build_database`。注意 `build_vector_store` 与 `build_database` 目前用 if 分支直连具体类、并未查询注册表，新增后端必须同时改配置 `Literal` 与分支。
+- 注册表模块（`registry_*.py`）只登记与解析，不实例化、不持有状态；实例化只发生在 `llm_handler.py`、`embedder_handler.py`、`rerank_handler.py`，以及顶层门面 `memories.py`（关系库走 `resolve_db`、向量库走 `resolve_vector_store` 后直接构造，不再经 `db_engine.build_database`）。`vector_engine.build_vector_store` 仍是 if 分支直连具体类，新增向量后端必须同时改配置 `Literal` 与该分支。
 - 方言实现一律在函数内惰性导入 `pymilvus`、`psycopg`、`pymysql`、`aiosqlite`，模块顶层不导入可选依赖，保证缺驱动时仍可导入包。
 - 需要标注上层类型时放进 `if TYPE_CHECKING:` 块并保留 `from __future__ import annotations`，禁止为标注写运行时导入（`llm`、`embedding`、`storage.memories` 曾因此循环导入）。
 - 可恢复的失败要抛领域异常（`core.exceptions` 下的 `ConfigError`、`DataError`、`StorageError`、`LLMError`、`EmbeddingError`、`OptionalDependencyError`），不要抛裸 `Exception`，也不要静默吞掉。
@@ -117,14 +117,41 @@ Windows 控制台代码页为 936。写文件统一 `encoding=` 指定 utf-8 并
 - `insert_memories(entries, session_scope, messages=None)` 从 entry 顶层读 `tenant_id` 与 `user_id`，历史表这两列都是 NOT NULL，entry 少传即在写审计时抛错。
 - `scope.build_new_metadata(agent_id=None, metadata=None, filters=None)` 返回 `(new_metadata, query)`，只处理 `agent_id`；`update_metadata_keys` 另有 `context` 关键字只用于告警文案。`SESSION_PARAMS` 只有 `agent_id`，不传 agent_id 时会话键为空串，消息表会退化成按租户归组。
 
+### 3.2 顶层门面契约（memories.py）
+
+`memories.py` 是唯一装配入口。模块级只剩私有辅助函数，公开面是 `MemoriesBase`、`Memories` 与 `AsyncMemories`；两个子类各自只声明两个类属性，`load` 与 `create` 全部写在基类里。
+
+| 入口 | 类属性 | 产物 | 配置要求 |
+| --- | --- | --- | --- |
+| `Memories` | `is_async=False`、`handler_cls=MemoryHandler` | `MemoryHandler` | `db.backend` 与 `vector.backend` 必须取同步值 |
+| `AsyncMemories` | `is_async=True`、`handler_cls=AsyncMemoryHandler` | `AsyncMemoryHandler` | 必须取 `_async` 值 |
+
+公开方法只有两个，签名固定：
+
+| 方法 | 签名 | 说明 |
+| --- | --- | --- |
+| `load` | `(json_text=None, yaml_path=None, use_env=True, env_prefix=LOONG_MEMORIES__)` | 装载配置后转 `create` |
+| `create` | `(settings: MemorySettings)` | 只吃配置，不接受组件注入 |
+
+约束细节：
+
+- `load` 与 `create` **不接收** `embedder` / `llm` / `reranker` / `db` / `vector`；六个分区全部由配置构造，要换实现就改配置，或在测试里直接构造 handler。
+- `REQUIRED_PARTITIONS` 是硬依赖清单（`embedding`、`llm`、`db`、`vector`），任一 `enable=False` 抛 `ConfigError`；`rerank` 与 `nlp` 可选，关闭时 handler 分别收到 `reranker=None` 与 `nlp_setting=None`。
+- 三层实现族校验按实现类判定，不看 `backend` 名字：`_db_is_async` 用 `isinstance(db, AsyncDBEngine)`，`_engine_is_async` 用 `isinstance(vector, AsyncVectorEngine)`，`_store_is_async` 看底层实现类的 `search` 是否为协程。任一不符即抛 `ConfigError`，文案带实际类名。
+- 向量库实现类由 `_store_class(backend, is_async)` 解析：先把 `backend` 的 `_async` 后缀归一，再经 `resolve_vector_store` 取同步实现类；异步入口在同一模块内找「同步类的子类且 `search` 为协程」的类，找不到就报错提示注入门面之外的实现。
+- 连接参数由 `_db_kwargs` 与 `_vector_kwargs` 组装：前者按 `backend.startswith` 覆盖 SQLite、MySQL、PG 三分支并附连接池与表前缀，后者按 `backend.startswith(milvus)` 区分，空字符串字段不下传但 `False` 布尔值保留。
+- `load` 与 `create` 只装配不启动：同步侧自行 `handler.start()`，异步侧 `await handler.start()`。
+- 包根 `__init__` 刻意不导出本模块，保证 `import loong_memories` 不牵入 sqlalchemy。
+
+
 ## 4. 新增一个实现
 
 ### 4.1 存储后端
 
 1. 在 `storage/message` 或 `storage/memories` 下新建模块，继承 `BaseDB` 或 `VectorStoreBase`。
-2. 类属性声明 `backend`，`__init_subclass__` 会自动登记；也可用 `register_db`、`register_vector_store` 显式登记（注意这两个注册表目前只写不读，工厂仍走 if 分支）。
+2. 类属性声明 `backend`，`__init_subclass__` 会自动登记；也可用 `register_db`、`register_vector_store` 显式登记。关系库由门面经 `resolve_db` 直接解析，注册表是生效的；向量库仍要同步 `vector_engine.build_vector_store` 的 if 分支。
 3. 放行配置：在 `core/config_db.py` 或 `core/config_vector.py` 的 `Literal` 里加入该后端名。
-4. 在 `db_engine.build_database` 或 `vector_engine.build_vector_store` 补分支，连接参数经 `_backend_kwargs` 透传。
+4. 在 `vector_engine.build_vector_store` 与两个注册表 `registry_db`、`registry_vector` 中补分支；连接参数由门面 `memories.py` 的 `_vector_kwargs` 与 `_db_kwargs` 组装后透传，参数集合变动要同步门面。
 5. 补测试：契约用例（构造、类属性、缺依赖抛 `OptionalDependencyError`）加集成用例，文件名用 `test_integration_` 前缀。
 
 向量库必须遵守的契约：
@@ -145,7 +172,7 @@ Windows 控制台代码页为 936。写文件统一 `encoding=` 指定 utf-8 并
 ### 4.3 配置项
 
 - 所有配置必须有归属：新增字段落在 `core/config_*.py` 的 pydantic 模型里，模型统一把 `extra` 设为 forbid，字段名拼错要直接报错而不是被忽略。
-- 顶层是五分区：`enable` 加 `embedding`、`llm`、`rerank`、`db`、`vector`；`MemorySettings` 校验 `embedding.dim` 与 `vector.vector_size` 一致，改一侧必须同步另一侧。
+- 顶层是六分区：`enable` 加 `embedding`、`llm`、`rerank`、`db`、`vector`、`nlp`；`MemorySettings` 校验 `embedding.dim` 与 `vector.vector_size` 一致，改一侧必须同步另一侧。
 - 新增字段要写 `description`，说明取值与影响，尤其是超时、并发、阈值这类运维关心的项。
 - 环境变量只允许在 `core/loader_config.py` 读取（前缀 `LOONG_MEMORIES__`，层级用双下划线），业务代码禁止直接读 `os.environ`。
 - 阈值、批大小、top_k 这类可调参数必须进配置模型。`memory` 分区目前不暴露检索默认值，`DEFAULT_TOP_K`（20）、`DEFAULT_THRESHOLD`（0.1）、`DEFAULT_CONTEXT_TOP_K`（10）、`DEFAULT_KEYWORD_WEIGHT`（0.5）、`DEFAULT_HISTORY_MESSAGES`（10）集中在 `memory/handler.py` 顶部。
@@ -160,15 +187,16 @@ Windows 控制台代码页为 936。写文件统一 `encoding=` 指定 utf-8 并
 | `test_embedding.py`（283 行） | `embedding` 包 | 缺 `openai` 时整模块 skip |
 | `test_llm.py`（299 行） | `llm` 包 | 同上 |
 | `test_sqlite_db.py`（521 行） | `storage/message/sqlite_db.py` | 默认执行，库文件落 `tmp_path` |
-| `test_integration_stores.py`（980 行） | `memory/stores.py` | `--integration`，另需 sqlalchemy 与关系库、向量库 |
-| `test_integration_vector_engine.py`（613 行） | `storage/memories/vector_engine.py` | `--integration` |
+| `test_integration_stores.py`（992 行） | `memory/stores.py` | `--integration`，另需 sqlalchemy 与关系库、向量库 |
+| `test_integration_vector_engine.py`（605 行） | `storage/memories/vector_engine.py` | `--integration` |
 | `test_integration_pg_store.py`（785 行） | `storage/memories/pg_store.py` | `--integration`，需 PG 与 pgvector |
 | `test_integration_milvus_store.py`（713 行） | `storage/memories/milvus_store.py` | `--integration`，需 Milvus |
 | `test_integration_mysql_db.py`（613 行） | `storage/message/mysql_db.py` | `--integration`，需 MySQL |
 | `test_integration_pg_db.py`（603 行） | `storage/message/pg_db.py` | `--integration`，需 PG |
-| `test_integration_ai_memory_handler.py`（875 行） | `memory/handler.py` 端到端 | `--integration_ai`，需真实关系库、向量库与 LLM 凭据 |
+| `test_integration_ai_memory_handler.py`（879 行） | `memory/handler.py` 端到端 | `--integration_ai`，需真实关系库、向量库与 LLM 凭据 |
+| `test_integration_ai_memories.py`（947 行） | 门面 `memories.py` 端到端 | `--integration_ai`，需真实关系库、向量库与 LLM 凭据 |
 
-`tests/conftest.py`（230 行）提供：`--integration` 与 `--integration_ai` 两个自定义开关、`unit`、`integration`、`integration_ai` 三个标记注册、src 路径注入，以及 `CONFIG_EMBEDDING`、`CONFIG_LLM`、`CONFIG_RERANK`、`CONFIG_DB`、`CONFIG_VECTOR` 五份配置字典、对应的 Settings 对象与 `CONFIG_MEMORY_SETTINGS`。注意 conftest 顶部 docstring 仍写 `addopts` 为 `-m integration`，那是旧配置，实际值见 5.3。
+`tests.conftest.py`（245 行）提供：`--integration` 与 `--integration_ai` 两个自定义开关、`unit`、`integration`、`integration_ai` 三个标记注册、src 路径注入，以及 `CONFIG_EMBEDDING`、`CONFIG_LLM`、`CONFIG_RERANK`、`CONFIG_NLP`、`CONFIG_DB`、`CONFIG_VECTOR` 六份配置字典、对应 Settings 对象与 `CONFIG_MEMORY_SETTINGS`。注意 `CONFIG_JSON_DICT` 不含顶层 `enable`，走门面的用例必须自己补 `enable=True`。
 
 ### 5.2 门控机制
 
@@ -189,6 +217,7 @@ hatch run pytest tests -q                                 # 全部用例（集�
 hatch run pytest tests -q -rs                             # 附带 skip 原因
 hatch run pytest tests -q -m unit                         # 只跑单元标记
 hatch run pytest tests -q --cov --cov-report=term-missing # 覆盖率
+hatch run pytest tests -q -k memories                      # 门面单元用例，缺依赖时整模块 skip
 
 # 集成环境：需要真实 MySQL、PostgreSQL、Milvus
 hatch run loong_memories_dev:pytest tests --integration -q -k mysql
@@ -196,6 +225,7 @@ hatch run loong_memories_dev:pytest tests --integration -q -k pg
 hatch run loong_memories_dev:pytest tests --integration -q -k milvus
 hatch run loong_memories_dev:pytest tests --integration -q tests/test_integration_stores.py -v -s
 hatch run loong_memories_dev:pytest tests --integration_ai -q -k ai_memory_handler
+hatch run loong_memories_dev:pytest tests --integration_ai -q -k ai_memories
 ```
 
 `hatch run test` 走 pyproject 里的 `test = pytest`，不额外传参时等于 `pytest` 加默认 `addopts`。因为集成门控在文件内部，用 `-m` 反选已经拦不住它们，要跳过就靠不传 `--integration`／`--integration_ai`。
@@ -245,7 +275,10 @@ hatch run types:check src/loong_memories
 | 过滤参数叫 `filter` | 传 `filters` 报未知关键字 | handler、store、engine 全链路统一单数 `filter` |
 | `MemoryHandler` 不再接收 `settings` | 沿用旧装配方式会 `TypeError` | 注入 `embedder`、`llm`、`db`、`vector`，`reranker` 可选 |
 | 模块级 skip 会连坐 | 同文件的 Mock 单元用例也不执行 | 必须传 `--integration_ai` 才收该文件，不要拿默认运行结果当回归结论 |
-| 工厂不查注册表 | 新后端已登记仍选中失败 | 同步改配置 `Literal` 与 `build_vector_store`、`build_database` 的 if 分支 |
+| 工厂不查注册表 | 新后端已登记仍选中失败 | 关系库已改由门面经 `resolve_db` 解析；向量库仍需同步 `Literal` 与 `build_vector_store` 的 if 分支 |
+| 门面不接受组件注入 | 传 `embedder=` 之类会 `TypeError` | `Memories.create` / `load` 只吃配置；测试要用替身就直接构造 `MemoryHandler` |
+| `CONFIG_JSON_DICT` 不含顶层 `enable` | 走门面的用例全被「记忆服务未启用」拦下 | 用例自己补 `enable=True`，或直接给 `MemorySettings` 对象 |
+| 同步入口包住异步方言 | 运行期拿到未 `await` 的协程 | 门面装配期三层族校验会拦下；直接构造引擎的代码需自行确认 |
 | `.gitignore` 未忽略 `*.db` | 仓库根残留未跟踪的 `test.db` | 用例统一落 `tmp_path`，必要时补忽略规则 |
 | 中文经管道输出 | 控制台把中文标题显示成以 `寮` 开头的乱码 | 只是解码口径不一致，用 `sys.stdout.reconfigure(encoding='cp936')` 复看，不要据此改文件编码 |
 
@@ -256,3 +289,5 @@ hatch run types:check src/loong_memories
 - 改存储层签名：同步 `memory/stores.py`、`storage/memories/vector_engine.py`、方言实现与对应集成用例。
 - 改配置字段：同步 `core/config_*.py`、`config_memory` 的联动校验、`tests/conftest.py` 的 `CONFIG_*` 字典、`README.md` 的配置章节。
 - 新增文件：补 `__init__.py`、补包级导出（如需要）、补测试并归入正确的门控层。
+- 改门面契约：同步 `memories.py` 的 `load` 与 `create` 签名、`REQUIRED_PARTITIONS`、三层族判定函数、`README.md` 装配章节与门面契约用例。
+- 改后端枚举：同步 `core.config_db` 或 `core.config_vector` 的 `Literal`、门面的 `_db_kwargs` 与 `_vector_kwargs` 与 `_store_class` 的后缀归一、集成用例的后端矩阵。

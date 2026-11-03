@@ -9,7 +9,7 @@
 
 loong_memories 面向需要跨会话记住用户的 LLM 应用（AI 助手、Agent、客服机器人）。它把「记忆」拆成六个稳定动作 —— 读取、分页、写入、检索、更新、删除 —— 并把大模型厂商、嵌入模型、关系库、向量库全部做成可插拔后端，换一个配置键即可切换实现。
 
-> 当前版本对外只暴露 `MemoryHandler` 与 `AsyncMemoryHandler` 两个入口；顶层门面 `memories.py` 尚未装配。
+> 顶层门面 `loong_memories.memories` 提供 `Memories` 与 `AsyncMemories` 两个入口，`load` / `create` 一次完成配置装载与装配；业务调用仍落在 `MemoryHandler` 与 `AsyncMemoryHandler` 上。
 
 ## 特性
 
@@ -20,8 +20,9 @@ loong_memories 面向需要跨会话记住用户的 LLM 应用（AI 助手、Age
 - **去重与审计**：正文 MD5 指纹去重；写入、更新、删除各落一条历史记录，支持溯源。
 - **可插拔后端**：注册表加工厂模式，子类声明 `backend` 即自动注册；大模型支持 OpenAI / Qwen / DeepSeek 以及任意 OpenAI 兼容服务。
 - **配置三级叠加**：字段默认值、YAML 文件、JSON 字符串、环境变量按优先级深度合并，最后统一用 pydantic 校验。
-- **同步与异步**：关系库与向量库均提供异步实现（配置键加 `_async` 后缀），业务层默认同步阻塞、不引入并发。
+- **同步与异步**：关系库与向量库均提供异步实现（配置键为 `_async` 后缀），入口按实现类分族并在装配期校验，业务层默认同步阻塞、不引入并发。
 - **会话消息留存**：按 `session_scope` 只保留最近 N 条消息，为滚动压缩与长上下文对齐预留接入点。
+- **统一入口**：`Memories` / `AsyncMemories` 的 `load` 与 `create` 一次完成配置装载、六分区构造与三层实现族校验，装配失败在启动前抛 `ConfigError`。
 - **ID 与作用域**：64 位雪花 ID 作主键；`agent_id` 是唯一的会话分组来源，metadata 中的身份字段一律剥离。
 
 ## 安装
@@ -48,39 +49,27 @@ pip install loong_memories[parsers]            # spaCy 与中文模型（BM25 �
 
 ### 装配
 
-处理器只接收四个必需的后端对象与一个可选重排器，不再接收 `settings`：
+顶层门面 `memories.py` 已经可用，装配只需一次调用：`Memories.load` 装载配置并构造同步处理器，`AsyncMemories.load` 构造异步处理器。两个类都提供 `load` 与 `create`，`load` 读配置，`create` 直接吃已构造好的 `MemorySettings`。
 
 ```python
-from loong_memories.core.loader_config import load_config
-from loong_memories.embedding.embedder_handler import EmbedderHandler
-from loong_memories.llm.llm_handler import LLMHandler
-from loong_memories.memory.handler import MemoryHandler
-from loong_memories.reranks.rerank_handler import RerankHandler
-from loong_memories.storage.memories.milvus_store import MilvusVectorStore
-from loong_memories.storage.memories.vector_engine import VectorEngine
-from loong_memories.storage.message.db_engine import build_database
+from loong_memories.memories import AsyncMemories, Memories
 
-settings = load_config(yaml_path="config.yaml")
+handler = Memories.load(yaml_path='config.yaml')   # 或 Memories.create(settings)
+handler.start()                                        # 启动关系库与向量库连接
 
-db = build_database(settings.db)                       # 关系库：历史与消息
-store = MilvusVectorStore(
-    uri=settings.vector.milvus.uri,
-    collection_name=settings.vector.collection,
-    vector_size=settings.vector.vector_size,
-)
-vector = VectorEngine(store, default_top_k=settings.vector.top_k)
-
-handler = MemoryHandler(
-    embedder=EmbedderHandler(settings.embedding),
-    llm=LLMHandler(settings.llm),
-    db=db,
-    vector=vector,
-    reranker=RerankHandler(settings.rerank),           # 可选；不传则 search 跳过重排
-)
-handler.start()                                        # 启动向量库与关系库连接
+async_handler = AsyncMemories.load(yaml_path='config.yaml')
+await async_handler.start()                            # 异步侧必须 await
 ```
 
-四个后端都是硬依赖，缺任意一个会在构造期抛 `ConfigError`；`reranker` 允许为 `None`。
+`load` 的签名是 `(json_text=None, yaml_path=None, use_env=True, env_prefix=LOONG_MEMORIES__)`，与 `load_config` 一致；它**不接收** `embedder` / `llm` / `reranker` / `db` / `vector` 注入，六个分区全部由配置构造。需要替换后端时改配置，或在测试里直接构造 `MemoryHandler`。
+
+装配期会做三轮硬校验，任一不过直接抛 `ConfigError`：
+
+1. 总开关 `enable` 与四个硬依赖分区 `embedding` / `llm` / `db` / `vector` 必须为 `True`，`rerank` 与 `nlp` 可选；
+2. `db.sqlite.db_path`、`vector.collection` 这类必填项不能为空；
+3. 关系库、向量引擎、底层向量库三层的**实现族**必须与入口一致 —— 全部按实现类判定（`isinstance` 与协程方法），不看 `backend` 名字。
+
+第三条是关键：`Memories` 只接受同步实现类，`AsyncMemories` 只接受异步实现类。混用（例如同步入口配了 `db.backend=sqlite_async`，或同步引擎里包了异步向量库）在装配期就报错，不会拖到运行期拿到未 `await` 的协程。
 
 
 ### 写入
@@ -203,6 +192,8 @@ print(dele.id)
 
 ## 配置
 
+本节给出常用字段、装载入口与示例；**完整的字段清单**（类型、默认值、约束、环境变量名、校验报错与扩展指引）统一维护在 [CONFIGURATION.md](CONFIGURATION.md)，改配置前先对照该表。
+
 ### 装载入口
 
 ```python
@@ -215,7 +206,7 @@ settings = load_config(json_text=None, yaml_path=None, use_env=True)
 
 优先级从低到高：字段默认值、YAML 文件、JSON 字符串、环境变量。同名键深度合并，最终统一用 `MemorySettings` 校验；任何解析或校验失败都抛 `ConfigError`。
 
-`MemorySettings` 由五个分区组成，均设置 `extra=forbid`，字段名拼错会直接报错：
+`MemorySettings` 由六个分区组成（顶层另有总开关 `enable`），全部设置 `extra=forbid`，字段名拼错会直接校验失败：
 
 | 分区 | 模型 | 关键字段 |
 | --- | --- | --- |
@@ -224,8 +215,13 @@ settings = load_config(json_text=None, yaml_path=None, use_env=True)
 | `rerank` | `RerankSettings` | `provider`、`model`、`top_k`、`max_documents`、`max_tokens`、`api_key`、`base_url`、`timeout` |
 | `db` | `DBSettings` | `backend`、`table_prefix`、`sqlite` / `mysql` / `pg`、`pool_config` |
 | `vector` | `VectorSettings` | `backend`、`collection`、`vector_size`、`top_k`、`metric_type`、`milvus` / `pg` |
+| `nlp` | `NlpSettings` | `enable`、`nlp_name`（默认 `zh_core_web_md`，需 parsers 依赖） |
 
-`MemorySettings` 还会校验 `embedding.dim` 与 `vector.vector_size` 是否一致，不一致直接拒绝启动。
+后端可选值：`db.backend` 取 `sqlite`、`mysql`、`pg`、`sqlite_async`、`mysql_async`、`pg_async`；`vector.backend` 取 `milvus`、`pg`、`milvus_async`、`pg_async`。同步入口配无后缀值，异步入口配 `_async` 值，混用在装配期报错。
+
+`MemorySettings` 由六个分区组成（顶层还有总开关 `enable`），每个子模型都是 `extra=forbid`，字段名拼错会直接校验失败；另校验 `embedding.dim` 与 `vector.vector_size` 是否一致，不一致直接拒绝启动。
+
+配置字段的类型、默认值、约束与环境变量对照见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ### YAML 示例
 
@@ -261,6 +257,9 @@ vector:
   metric_type: COSINE
   milvus:
     uri: http://localhost:19530
+nlp:
+  enable: true
+  nlp_name: zh_core_web_md
 ```
 
 
@@ -280,6 +279,8 @@ vector:
 取值默认保持字符串，交由 pydantic 转换类型；仅当值以 `[` 或 `{` 开头时才按 JSON 解析，用于表达列表与嵌套对象。
 
 API Key 也可以留空，由各 provider 按约定读取 `OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`DEEPSEEK_API_KEY`。
+
+每个字段对应的环境变量名可按「前缀 + 层级双下划线 + 字段名大写」推导，全量对照见 [CONFIGURATION.md](CONFIGURATION.md) 的各分区字段表。
 
 
 ## 数据流
@@ -332,7 +333,7 @@ class MyVectorStore(VectorStoreBase):
 
 向量库需遵守契约：`search` 返回的 `score` 越大越相似。使用距离度量的实现要先转相似度，例如 COSINE 用 `max(0.0, 1.0 - distance)`。
 
-注意：`build_vector_store` 与 `build_database` 目前按 `if` 分支直连具体实现，新增后端还需同步 `core.config_vector` / `core.config_db` 的 `Literal` 与工厂分支。
+注意：关系库与向量库的实例化已上收到门面 `memories.py`（`_db_kwargs`、`_vector_kwargs`、`_store_class`），`db_engine` 里的 `build_database` 与 `vector_engine` 里的 `build_vector_engine`、`_backend_kwargs` 均已移除。新增后端时仍需同步 `core.config_db` 或 `core.config_vector` 的 `Literal`，并在 `vector_engine.build_vector_store` 与两个注册表补分支；门面先把 `backend` 归一，再经注册表解析实现类。
 
 ### 新增模型厂商
 
@@ -353,9 +354,9 @@ class MyLLM(OpenAILLMProvider):
 
 ## 路线图
 
-- 实现顶层门面 `memories.py` 与包级导出，收敛当前的手工装配流程。
+- 已实现顶层门面 `memories.py`（`Memories` 与 `AsyncMemories`）；剩余工作是包级导出与示例工程。
 - 对话历史滚动压缩与长文本记忆对齐：入口落在 `memory.handler`，提示词落在 `memory.prompts`，阈值配置落在 `core.config_memory`。
-- 向量分区放行异步后端配置键，补齐异步编排。
+- 向量分区已放开异步后端配置键（`milvus_async`、`pg_async`），异步编排由 `AsyncMemories` 承接。
 - 提供开箱可用的示例工程与 Docker Compose 依赖编排。
 
 ## 许可
@@ -365,4 +366,6 @@ Apache 2.0，作者 loong（longgyx@gmail.com）。
 ## 开发贡献
 
 开发环境与依赖管理、命令分类、代码检查、测试与集成测试配置、目录结构与测试清单、待实现项详见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+
+
 
