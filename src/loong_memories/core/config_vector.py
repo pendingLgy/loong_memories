@@ -80,7 +80,7 @@ class VectorSettings(BaseModel):
     enable: bool = Field(default=False)
 
     # 当前使用的向量后端名，对应 storage.vector_store 注册表中的键。
-    backend: Literal["milvus", "pg"] = Field(default="milvus")
+    backend: Literal["milvus", "pg", "milvus","milvus_async", "pg_async"] = Field(default="milvus")
     # 集合名与向量维度。
     collection: str = Field(default="")
     vector_size: int = Field(default=1024, gt=0)

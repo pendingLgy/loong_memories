@@ -113,6 +113,7 @@ class PGDB(DBEngine):
 
         parse_connection_string = self.connection_string
 
+        self.sslmode = self.sslmode if self.sslmode and self.sslmode != "" else "disable"
         # 连接串里的驱动前缀统一改成当前可用驱动：装了 psycopg3 却写 psycopg2 时也能连。
         if parse_connection_string:
             for prefix in ("postgresql+psycopg2://", "postgresql+psycopg://", "postgres://", "postgresql://"):

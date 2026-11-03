@@ -205,6 +205,8 @@ class PGVectorStore(VectorStoreBase):
                 '使用 SQLAlchemy PG 向量库需要安装 sqlalchemy 及 pgvector，请执行 pip install sqlalchemy pgvector'
             ) from _SQLALCHEMY_ERROR
 
+        self.sslmode = self.sslmode if self.sslmode and self.sslmode != "" else "disable"
+
         if self.connection_string:
             self.connection_string = self.connection_string
         else:

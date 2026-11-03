@@ -127,7 +127,7 @@ class MySQLDB(DBEngine):
         }
 
         # 如果设置了 sql_mode，通过 init_command 在建连时初始化
-        if self.sql_mode:
+        if self.sql_mode and self.sql_mode != '':
             connect_args["init_command"] = f"SET sql_mode='{self.sql_mode}'"
 
         try:
@@ -286,7 +286,7 @@ class AsyncMySQLDB(AsyncDBEngine):
         }
 
         # 如果设置了 sql_mode，通过 init_command 在异步建连时动态设置
-        if self.sql_mode:
+        if self.sql_mode and self.sql_mode != '':
             connect_args["init_command"] = f"SET sql_mode='{self.sql_mode}'"
 
         # 初始化异步引擎与会话工厂

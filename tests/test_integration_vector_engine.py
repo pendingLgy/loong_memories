@@ -12,8 +12,7 @@
 
 覆盖策略：
 1. 契约层：构造参数、backend、collection_name、vector_size、default_top_k、store 属性、
-   上下文管理器的移除、insert 签名，以及模块级 build_vector_store、create_vector_engine、
-   build_vector_engine。这一组不连数据库，无需 --integration。
+   上下文管理器的移除、insert 签名，以及模块级 build_vector_store、create_vector_engine。。这一组不连数据库，无需 --integration。
 2. 集成层：同步与异步引擎分别接入真实 PostgreSQL 向量库，集合固定为 TEST_COLLECTION
    （表名），主键以及 payload 内的 tenant_id、user_id 全部来自 _next_id。
 3. 向量与文本全随机：seed 取系统熵，文本从 _TEXTS 抽样，断言只比对写入值。
@@ -47,7 +46,6 @@ try:
     from loong_memories.storage.memories.vector_engine import (
         AsyncVectorEngine,
         VectorEngine,
-        build_vector_engine,
         build_vector_store,
         create_vector_engine,
     )
@@ -586,7 +584,7 @@ class TestAsyncVectorEngineIntegration:
 
 
 class TestVectorEngineFactories:
-    """build_vector_store、create_vector_engine、build_vector_engine 的行为。"""
+    """build_vector_store、create_vector_engine 的行为。"""
 
     def test_build_vector_store_returns_pg_store(self):
         store = build_vector_store('pg', collection_name=TEST_COLLECTION,
@@ -604,10 +602,4 @@ class TestVectorEngineFactories:
         assert isinstance(eng, VectorEngine)
         assert (eng.backend, eng.default_top_k) == ('pg', 7)
         assert eng.collection_name == TEST_COLLECTION
-
-    def test_build_vector_engine_reads_settings(self, vector_settings):
-        settings = vector_settings.model_copy(update={'backend': 'pg'})
-        eng = build_vector_engine(settings)
-        assert (eng.backend, eng.collection_name) == ('pg', settings.collection)
-        assert (eng.vector_size, eng.default_top_k) == (settings.vector_size, settings.top_k)
 

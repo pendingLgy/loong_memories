@@ -29,6 +29,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from loong_memories.core.config_db import DBSettings
 from loong_memories.core.config_llm import EmbeddingSettings, LLMSettings, RerankSettings
+from loong_memories.core.config_nlp import NlpSettings
 from loong_memories.core.config_vector import VectorSettings
 
 
@@ -47,6 +48,7 @@ class MemorySettings(BaseSettings):
     rerank: RerankSettings = Field(default_factory=RerankSettings)
     db: DBSettings = Field(default_factory=DBSettings)
     vector: VectorSettings = Field(default_factory=VectorSettings)
+    nlp: NlpSettings = Field(default_factory=NlpSettings)
 
     @classmethod
     def settings_customise_sources(

@@ -24,12 +24,11 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from loong_memories.core.exceptions import ConfigError, StorageError
 from loong_memories.storage.memories.base import VectorStoreBase, VectorStoreResult
 from loong_memories.storage.memories.registry_vector import available_vector_stores
-from loong_memories.core.config_vector import VectorSettings
 
 logger = logging.getLogger(__name__)
 
@@ -325,42 +324,3 @@ def create_vector_engine(
     """构造向量库并包成引擎，一次得到可直接调用的入口。"""
     store_base = build_vector_store(backend, **kwargs)
     return VectorEngine(store_base, default_top_k=default_top_k)
-
-
-def build_vector_engine(
-    settings: "VectorSettings",
-    **overrides: Any,
-) -> VectorEngine:
-    """按 VectorSettings 装配向量引擎：按后端组装连接参数，集合与维度统一注入。"""
-    kwargs: Dict[str, Any] = {
-        'collection_name': settings.collection,
-        'vector_size': settings.vector_size,
-    }
-    kwargs.update(_backend_kwargs(settings))
-    kwargs.update(overrides)
-    store = build_vector_store(settings.backend, **kwargs)
-    return VectorEngine(store, default_top_k=settings.top_k)
-
-
-def _backend_kwargs(settings: "VectorSettings") -> Dict[str, Any]:
-    """按后端组装连接参数；留空字段不下传，交由实现层使用自身默认值。"""
-    if settings.backend == 'milvus':
-        milvus = settings.milvus
-        candidates = {
-            'uri': milvus.uri,
-            'token': milvus.token,
-            'db_name': milvus.db_name,
-        }
-    else:
-        pg = settings.pg
-        candidates = {
-            'connection_string': pg.connection_string,
-            'host': pg.host,
-            'port': pg.port,
-            'user': pg.user,
-            'password': pg.password,
-            'database': pg.database,
-            'use_hnsw': pg.use_hnsw,
-            'use_diskann': pg.use_diskann,
-        }
-    return {name: value for name, value in candidates.items() if value != ""}
