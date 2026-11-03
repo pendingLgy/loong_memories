@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from loong_memories.core.config_nlp import NlpSettings
 from loong_memories.memory import scope
 from loong_memories.nlp.lemmatization import lemmatize_zh_for_bm25
 from loong_memories.storage.message.mysql_db import AsyncMySQLDB, MySQLDB
@@ -31,12 +32,11 @@ from loong_memories.storage.message.sqlite_db import AsyncSQLiteDB, SQLiteDB
 
 try:
     import pytest_asyncio
-    from conftest import CONFIG_DB_SETTINGS, CONFIG_VECTOR_SETTINGS
+    from conftest import CONFIG_DB_SETTINGS, CONFIG_VECTOR_SETTINGS, CONFIG_NLP_SETTINGS
     from loong_memories.core.exceptions import StorageError
     from loong_memories.memory.stores import (
         AsyncMemoryStore,
         MemoryStore,
-        build_payload,
         keyword_text,
         split_payload,
         to_vector_id_int,
@@ -122,7 +122,7 @@ class _AsyncVectorEngineStub:
         self.get = AsyncMock(return_value=None)
 
 
-def _make_entry(text, memory_id=1, tenant_id=TENANT_ID, user_id=USER_ID, vector=None):
+def _make_entry(store, text, memory_id=1, tenant_id=TENANT_ID, user_id=USER_ID, vector=None):
     """构造 insert_memories 入参。
 
     租户与用户需同时出现在 entry 顶层（写 HistoryRecord 用，且以字符串覆盖
@@ -133,7 +133,7 @@ def _make_entry(text, memory_id=1, tenant_id=TENANT_ID, user_id=USER_ID, vector=
         'tenant_id': str(tenant_id),
         'user_id': str(user_id),
         'vector': list(vector) if vector else [0.1] * VECTOR_SIZE,
-        'payload': build_payload(text, {'tenant_id': int(tenant_id), 'user_id': int(user_id)}),
+        'payload': store.build_payload(text, {'tenant_id': int(tenant_id), 'user_id': int(user_id)}),
     }
 
 
@@ -146,12 +146,12 @@ class TestMemoryStoreSync:
     def store_deps(self):
         vector = _SyncVectorEngineStub()
         db = MagicMock()
-        store = MemoryStore(vector, db)
+        store = MemoryStore(vector, db, CONFIG_NLP_SETTINGS)
         return store, vector, db
 
     def test_insert_memories_writes_vectors_history_and_messages(self, store_deps):
         store, vector, db = store_deps
-        entry = _make_entry('测试正文')
+        entry = _make_entry(store, '测试正文')
         message = Message(tenant_id=TENANT_ID, user_id=USER_ID, session_scope='s1', role='user', content='hello')
 
         store.insert_memories([entry], session_scope='s1', messages=[message])
@@ -177,7 +177,7 @@ class TestMemoryStoreSync:
 
     def test_insert_memories_falls_back_to_single_writes(self, store_deps):
         store, vector, db = store_deps
-        entries = [_make_entry('批量一', memory_id=1), _make_entry('批量二', memory_id=2)]
+        entries = [_make_entry(store, '批量一', memory_id=1), _make_entry(store, '批量二', memory_id=2)]
         vector.insert.side_effect = [RuntimeError('batch error'), None, None]
 
         with pytest.raises(StorageError,match='记忆写入全部失败'):
@@ -190,7 +190,7 @@ class TestMemoryStoreSync:
         vector.insert.side_effect = RuntimeError('persistent error')
 
         with pytest.raises(StorageError, match='记忆写入全部失败'):
-            store.insert_memories([_make_entry('失败正文')], session_scope='s1')
+            store.insert_memories([_make_entry(store, '失败正文')], session_scope='s1')
 
         db.batch_add_history.assert_not_called()
 
@@ -209,14 +209,14 @@ class TestMemoryStoreSync:
         db.add_history.side_effect = RuntimeError('single history error')
 
         # 历史链路失败只降级告警，不回滚主写入，也不向上抛异常
-        store.insert_memories([_make_entry('历史失败正文')], session_scope='s1')
+        store.insert_memories([_make_entry(store, '历史失败正文')], session_scope='s1')
 
         vector.insert.assert_called_once()
         db.batch_add_history.assert_called_once()
 
     def test_update_memory_forwards_scope_and_writes_history(self, store_deps):
         store, vector, db = store_deps
-        payload = build_payload('更新后正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
+        payload = store.build_payload('更新后正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
 
         store.update_memory(1, TENANT_ID, [0.3] * VECTOR_SIZE, payload, '更新前正文', user_id=USER_ID)
 
@@ -234,7 +234,7 @@ class TestMemoryStoreSync:
     def test_update_memory_wraps_engine_failure(self, store_deps):
         store, vector, db = store_deps
         vector.update.side_effect = RuntimeError('engine down')
-        payload = build_payload('任意正文', {'tenant_id': TENANT_ID})
+        payload = store.build_payload('任意正文', {'tenant_id': TENANT_ID})
 
         with pytest.raises(StorageError, match='记忆更新失败'):
             store.update_memory(1, TENANT_ID, [0.3] * VECTOR_SIZE, payload, '旧正文')
@@ -243,7 +243,7 @@ class TestMemoryStoreSync:
 
     def test_delete_memory_forwards_scope_and_marks_deleted(self, store_deps):
         store, vector, db = store_deps
-        payload = build_payload('待删除正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
+        payload = store.build_payload('待删除正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
 
         store.delete_memory(1, TENANT_ID, '待删除正文', payload, user_id=USER_ID)
 
@@ -389,15 +389,23 @@ class TestMemoryStoreSync:
 class TestPayloadHelpers:
     """payload 组装与拆分的纯函数契约。"""
 
-    def test_build_payload_carries_core_keys_and_scope(self):
-        payload = build_payload(
+    @pytest.fixture(scope='module')
+    def store_payload(self):
+        vector = _SyncVectorEngineStub()
+        db = MagicMock()
+        store = MemoryStore(vector, db, CONFIG_NLP_SETTINGS)
+        return store, vector, db
+
+    def test_build_payload_carries_core_keys_and_scope(self, store_payload):
+        store, vector, db = store_payload
+        payload = store.build_payload(
             '核心正文',
             {'tenant_id': TENANT_ID, 'user_id': USER_ID, 'agent_id': None},
         )
 
         assert payload['text'] == '核心正文'
         assert payload['hash'] == memory_hash('核心正文')
-        assert payload['text_lemma'] == lemmatize_zh_for_bm25(keyword_text('核心正文'))
+        assert payload['text_lemma'] == lemmatize_zh_for_bm25(keyword_text('核心正文'), store.nlp_setting.nlp_name)
         assert payload['created_at_tz']
         assert payload['updated_at_tz'] is None
         assert payload['tenant_id'] == TENANT_ID
@@ -405,15 +413,19 @@ class TestPayloadHelpers:
         # 空作用域值不写入 payload
         assert 'agent_id' not in payload
 
-    def test_build_payload_keeps_explicit_created_at(self):
+    def test_build_payload_keeps_explicit_created_at(self, store_payload):
+        store, vector, db = store_payload
+
         stamp = '2024-01-01T00:00:00+00:00'
 
-        payload = build_payload('指定时间', {'tenant_id': TENANT_ID}, created_at=stamp)
+        payload = store.build_payload('指定时间', {'tenant_id': TENANT_ID}, created_at=stamp)
 
         assert payload['created_at_tz'] == stamp
 
-    def test_split_payload_separates_core_promoted_and_metadata(self):
-        payload = build_payload('拆分正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
+    def test_split_payload_separates_core_promoted_and_metadata(self, store_payload):
+        store, vector, db = store_payload
+
+        payload = store.build_payload('拆分正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
         payload['actor_id'] = 'actor-1'
         payload['source'] = 'unit-test'
 
@@ -451,12 +463,12 @@ class TestAsyncMemoryStore:
     def async_store_deps(self):
         vector = _AsyncVectorEngineStub()
         db = AsyncMock()
-        store = AsyncMemoryStore(vector, db)
+        store = AsyncMemoryStore(vector, db, CONFIG_NLP_SETTINGS)
         return store, vector, db
 
     async def test_async_insert_memories_writes_vectors_history_and_messages(self, async_store_deps):
         store, vector, db = async_store_deps
-        entry = _make_entry('异步测试正文')
+        entry = _make_entry(store, '异步测试正文')
         message = Message(tenant_id=TENANT_ID, user_id=USER_ID, session_scope='s1', role='user', content='hello')
 
         await store.insert_memories([entry], session_scope='s1', messages=[message])
@@ -475,7 +487,7 @@ class TestAsyncMemoryStore:
 
     async def test_async_insert_memories_falls_back_to_single_writes(self, async_store_deps):
         store, vector, db = async_store_deps
-        entries = [_make_entry('批量一', memory_id=1), _make_entry('批量二', memory_id=2)]
+        entries = [_make_entry(store, '批量一', memory_id=1), _make_entry(store, '批量二', memory_id=2)]
         vector.insert.side_effect = [RuntimeError('batch error'), None, None]
 
         with pytest.raises(StorageError,match="记忆写入全部失败"):
@@ -488,11 +500,11 @@ class TestAsyncMemoryStore:
         vector.insert.side_effect = RuntimeError('persistent error')
 
         with pytest.raises(StorageError, match='记忆写入全部失败'):
-            await store.insert_memories([_make_entry('失败正文')], session_scope='s1')
+            await store.insert_memories([_make_entry(store, '失败正文')], session_scope='s1')
 
     async def test_async_update_memory_forwards_scope_and_writes_history(self, async_store_deps):
         store, vector, db = async_store_deps
-        payload = build_payload('更新后正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
+        payload = store.build_payload('更新后正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
 
         await store.update_memory(1, TENANT_ID, [0.3] * VECTOR_SIZE, payload, '更新前正文', user_id=USER_ID)
 
@@ -507,14 +519,14 @@ class TestAsyncMemoryStore:
     async def test_async_update_memory_wraps_engine_failure(self, async_store_deps):
         store, vector, db = async_store_deps
         vector.update.side_effect = RuntimeError('engine down')
-        payload = build_payload('任意正文', {'tenant_id': TENANT_ID})
+        payload = store.build_payload('任意正文', {'tenant_id': TENANT_ID})
 
         with pytest.raises(StorageError, match='记忆更新失败'):
             await store.update_memory(1, TENANT_ID, [0.3] * VECTOR_SIZE, payload, '旧正文')
 
     async def test_async_delete_memory_forwards_scope_and_marks_deleted(self, async_store_deps):
         store, vector, db = async_store_deps
-        payload = build_payload('异步待删除正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
+        payload = store.build_payload('异步待删除正文', {'tenant_id': TENANT_ID, 'user_id': USER_ID})
 
         await store.delete_memory(1, TENANT_ID, '异步待删除正文', payload, user_id=USER_ID)
 
@@ -618,7 +630,7 @@ def generate_random_vector(dim: int = 1024) -> list:
     return [round(0.15 + random.uniform(-0.02, 0.02), 4) for _ in range(dim)]
 
 
-def _build_entry(text, tenant_id, user_id, vector_size, vector=None):
+def _build_entry(store, text, tenant_id, user_id, vector_size, vector=None):
     """构造 insert_memories 入参。
 
     租户与用户需同时出现在 entry 顶层（写 HistoryRecord 用，且以字符串覆盖
@@ -629,7 +641,7 @@ def _build_entry(text, tenant_id, user_id, vector_size, vector=None):
         'tenant_id': str(tenant_id),
         'user_id': str(user_id),
         'vector': list(vector) if vector else [0.15] * vector_size,
-        'payload': build_payload(text, {'tenant_id': tenant_id, 'user_id': user_id}),
+        'payload': store.build_payload(text, {'tenant_id': tenant_id, 'user_id': user_id}),
     }
 
 
@@ -700,7 +712,7 @@ class TestMemoryStoreIntegration:
 
         # 生产链路由 VectorEngine 包一层，stores.py 按引擎签名调用（filters 等关键字名）
         vector_engine = VectorEngine(vector_store)
-        store = MemoryStore(vector_engine, db)
+        store = MemoryStore(vector_engine, db, CONFIG_NLP_SETTINGS)
 
         try:
             store.start()
@@ -718,7 +730,7 @@ class TestMemoryStoreIntegration:
     def test_real_store_insert_and_get(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         scope = 'session-' + str(_random_id())
-        entry = _build_entry(
+        entry = _build_entry(real_store,
             '测试真实落库正文', tenant_id, user_id, real_store.vector_engine.vector_size)
 
         real_store.insert_memories(
@@ -739,7 +751,7 @@ class TestMemoryStoreIntegration:
     def test_real_store_update_flow(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         vector_size = real_store.vector_engine.vector_size
-        entry = _build_entry('更新前正文', tenant_id, user_id, vector_size)
+        entry = _build_entry(real_store,'更新前正文', tenant_id, user_id, vector_size)
 
         real_store.insert_memories([entry], session_scope='s-update-' + str(entry['id']))
 
@@ -767,7 +779,7 @@ class TestMemoryStoreIntegration:
     def test_real_store_delete_flow(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         vector_size = real_store.vector_engine.vector_size
-        entry = _build_entry('待删除正文', tenant_id, user_id, vector_size)
+        entry = _build_entry(real_store,'待删除正文', tenant_id, user_id, vector_size)
 
         real_store.insert_memories([entry], session_scope='s-delete-' + str(entry['id']))
         assert real_store.get_memory(entry['id'], tenant_id, user_id) is not None
@@ -780,7 +792,7 @@ class TestMemoryStoreIntegration:
     def test_real_store_delete_is_tenant_scoped(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         vector_size = real_store.vector_engine.vector_size
-        entry = _build_entry('跨租户删除保护', tenant_id, user_id, vector_size)
+        entry = _build_entry(real_store,'跨租户删除保护', tenant_id, user_id, vector_size)
 
         real_store.insert_memories([entry], session_scope='s-scope-' + str(entry['id']))
 
@@ -797,7 +809,7 @@ class TestMemoryStoreIntegration:
         text_content = topic + '，' + suffix
         vector_size = real_store.vector_engine.vector_size
         vector = generate_random_vector(vector_size)
-        entry = _build_entry(text_content, tenant_id, user_id, vector_size, vector=vector)
+        entry = _build_entry(real_store, text_content, tenant_id, user_id, vector_size, vector=vector)
 
         real_store.insert_memories([entry], session_scope='s-recall-' + str(entry['id']))
 
@@ -838,7 +850,7 @@ class TestAsyncMemoryStoreIntegration:
     """AsyncMemoryStore 结合真实关系库与向量库的端到端集成测试。"""
 
     table_prefix = 'store_test_async_'
-    collection_name = 'store_test_async_vector'
+    collection_name = 'store_test_async_memoires'
 
     @pytest_asyncio.fixture(scope='module', loop_scope='module')
     async def real_store(self, db_async_backend, vector_async_backend):
@@ -876,7 +888,7 @@ class TestAsyncMemoryStoreIntegration:
 
         # 说明：AsyncVectorEngine 目前无法实例化（父类 __init__ 会拒绝含 async 的 backend），
         # 因此这里直接把方言实现交给 AsyncMemoryStore；其方法签名与 stores.py 的调用一致。
-        store = AsyncMemoryStore(vector_store, db)
+        store = AsyncMemoryStore(vector_store, db, CONFIG_NLP_SETTINGS)
 
         try:
             await store.start()
@@ -894,7 +906,7 @@ class TestAsyncMemoryStoreIntegration:
     async def test_real_store_insert_and_get(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         scope = 'session-' + str(_random_id())
-        entry = _build_entry(
+        entry = _build_entry(real_store,
             '异步测试真实落库正文', tenant_id, user_id, real_store.vector_engine.vector_size)
 
         await real_store.insert_memories(
@@ -914,7 +926,7 @@ class TestAsyncMemoryStoreIntegration:
     async def test_real_store_update_flow(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         vector_size = real_store.vector_engine.vector_size
-        entry = _build_entry('更新前正文', tenant_id, user_id, vector_size)
+        entry = _build_entry(real_store, '更新前正文', tenant_id, user_id, vector_size)
 
         await real_store.insert_memories([entry], session_scope='s-update-' + str(entry['id']))
 
@@ -942,7 +954,7 @@ class TestAsyncMemoryStoreIntegration:
     async def test_real_store_delete_flow(self, real_store):
         tenant_id, user_id = _random_id(), _random_id()
         vector_size = real_store.vector_engine.vector_size
-        entry = _build_entry('异步待删除正文', tenant_id, user_id, vector_size)
+        entry = _build_entry(real_store, '异步待删除正文', tenant_id, user_id, vector_size)
 
         await real_store.insert_memories([entry], session_scope='s-delete-' + str(entry['id']))
         assert await real_store.get_memory(entry['id'], tenant_id, user_id) is not None
@@ -959,7 +971,7 @@ class TestAsyncMemoryStoreIntegration:
         text_content = topic + '，' + suffix
         vector_size = real_store.vector_engine.vector_size
         vector = generate_random_vector(vector_size)
-        entry = _build_entry(text_content, tenant_id, user_id, vector_size, vector=vector)
+        entry = _build_entry(real_store, text_content, tenant_id, user_id, vector_size, vector=vector)
 
         await real_store.insert_memories([entry], session_scope='s-recall-' + str(entry['id']))
 

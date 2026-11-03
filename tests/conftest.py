@@ -15,6 +15,7 @@ import json
 import pathlib
 import sys
 
+from loong_memories.core.config_nlp import NlpSettings
 
 # src-layout 未安装时，把 src 加入导入路径，保证 loong_memories 可导入。
 _SRC_DIR = pathlib.Path(__file__).resolve().parents[1] / 'src'
@@ -103,6 +104,17 @@ CONFIG_RERANK = {
 }
 
 CONFIG_RERANK_JSON = _dumps(CONFIG_RERANK)
+
+
+# ---------- JSON 配置：nlp 分区 ----------
+
+# 对应 NlpSettings；nlp_name 参考spaCy。
+CONFIG_NLP = {
+    'enable': True,
+    'nlp_name': 'zh_core_web_md',
+}
+
+CONFIG_NLP_JSON = _dumps(CONFIG_NLP)
 
 # ---------- JSON 配置：db 分区 ----------
 
@@ -201,6 +213,8 @@ CONFIG_JSON_DICT = {
     'llm': CONFIG_LLM,
     'db': CONFIG_DB,
     'vector': CONFIG_VECTOR,
+    'rerank': CONFIG_RERANK,
+    'nlp': CONFIG_NLP,
 }
 
 CONFIG_JSON_TEXT = _dumps(CONFIG_JSON_DICT)
@@ -212,6 +226,7 @@ CONFIG_JSON_TEXT = _dumps(CONFIG_JSON_DICT)
 CONFIG_EMBEDDING_SETTINGS = EmbeddingSettings.model_validate_json(CONFIG_EMBEDDING_JSON)
 CONFIG_LLM_SETTINGS = LLMSettings.model_validate_json(CONFIG_LLM_JSON)
 CONFIG_RERANK_SETTINGS = RerankSettings.model_validate_json(CONFIG_RERANK_JSON)
+CONFIG_NLP_SETTINGS = NlpSettings.model_validate_json(CONFIG_NLP_JSON)
 CONFIG_DB_SETTINGS = DBSettings.model_validate_json(CONFIG_DB_JSON)
 CONFIG_VECTOR_SETTINGS = VectorSettings.model_validate_json(CONFIG_VECTOR_JSON)
 

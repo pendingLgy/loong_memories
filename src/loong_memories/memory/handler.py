@@ -26,6 +26,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from loong_memories.core.config_nlp import NlpSettings
 from loong_memories.core.exceptions import ConfigError, DataError, EmbeddingError, LLMError
 from loong_memories.embedding.embedder_handler import EmbedderHandler
 from loong_memories.llm.llm_handler import LLMHandler
@@ -54,7 +55,6 @@ from loong_memories.memory.scope import (
 from loong_memories.memory.stores import (
     AsyncMemoryStore,
     MemoryStore,
-    build_payload,
     keyword_text,
     memory_hash,
     now_iso,
@@ -67,7 +67,6 @@ from loong_memories.storage.memories.vector_engine import AsyncVectorEngine, Vec
 from loong_memories.storage.message.db_engine import AsyncDBEngine, DBEngine
 from loong_memories.storage.message.schema import Message
 from loong_memories.util.datetime_util import now_datetime
-from loong_memories.util.numberic_util import str_to_int
 from loong_memories.util.snowflake import next_id
 
 logger = logging.getLogger(__name__)
@@ -91,14 +90,16 @@ class MemoryHandler(MemoryBase):
         db: DBEngine,
         vector: VectorEngine,
         reranker: Optional[RerankHandler] = None,
+        nlp_setting: Optional[NlpSettings] = None
     ) -> None:
         self.embedder = embedder
         self.llm = llm
         self.db = db
         self.vector = vector
         self.reranker = reranker
+        self.nlp_setting = nlp_setting
         self._validate()
-        self.store = MemoryStore(vector, db)
+        self.store = MemoryStore(vector, db, nlp_setting)
 
 
     def start(self):
@@ -342,7 +343,7 @@ class MemoryHandler(MemoryBase):
         results: List[MemoryItem] = []
         for text, vector in zip(unique, vectors):
             memory_id = next_id()
-            payload = build_payload(text, new_metadata)
+            payload = self.store.build_payload(text, new_metadata)
 
             new_payload = payload.copy()
             new_payload.update({"tenant_id": tenant_id, "user_id": user_id})
@@ -533,7 +534,8 @@ class MemoryHandler(MemoryBase):
         changed = new_text != previous
         if changed:
             merged["text"] = new_text
-            merged["text_lemma"] = lemmatize_zh_for_bm25(keyword_text(new_text))
+            if self.nlp_setting is not None and self.nlp_setting.enable:
+                merged["text_lemma"] = lemmatize_zh_for_bm25(keyword_text(new_text))
             merged["hash"] = memory_hash(new_text)
         merged.setdefault("created_at_tz", now_iso())
         merged["updated_at_tz"] = now_iso()
@@ -563,9 +565,10 @@ class AsyncMemoryHandler(MemoryHandler):
         db: AsyncDBEngine,
         vector: AsyncVectorEngine,
         reranker: Optional[RerankHandler] = None,
+        nlp_setting: Optional[NlpSettings] = None
     ) -> None:
-        super().__init__(embedder, llm, db, vector, reranker)
-        self.store = AsyncMemoryStore(vector, db)
+        super().__init__(embedder, llm, db, vector, reranker, nlp_setting)
+        self.store = AsyncMemoryStore(vector, db, nlp_setting)
 
 
     async def start(self):
@@ -706,7 +709,7 @@ class AsyncMemoryHandler(MemoryHandler):
         results: List[MemoryItem] = []
         for text, vector in zip(unique, vectors):
             memory_id = next_id()
-            payload = build_payload(text, new_metadata)
+            payload = self.store.build_payload(text, new_metadata)
 
             new_payload = payload.copy()
             new_payload.update({"tenant_id": tenant_id, "user_id": user_id})

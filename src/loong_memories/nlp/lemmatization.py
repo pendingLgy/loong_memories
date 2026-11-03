@@ -31,20 +31,21 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Optional
 
-from loong_memories.nlp.spacy import get_nlp_lemma
+from loong_memories.nlp.spacy import load_nlp_lemma
 
 logger = logging.getLogger(__name__)
 
 
-def lemmatize_for_bm25(text: str) -> str:
+def lemmatize_for_bm25(text: str, model_name: Optional[str] = None) -> str:
     """Lemmatize text for BM25 matching.
 
     Returns space-joined lemmas for full-text search. Falls back to
     the original text if spaCy is unavailable.
     """
 
-    nlp_lemma = get_nlp_lemma()
+    nlp_lemma = load_nlp_lemma(model_name)
     if nlp_lemma is None:
         return text
 
@@ -67,13 +68,13 @@ def lemmatize_for_bm25(text: str) -> str:
     return " ".join(tokens)
 
 
-def lemmatize_zh_for_bm25(text: str) -> str:
+def lemmatize_zh_for_bm25(text: str, model_name: Optional[str] = None) -> str:
     """Lemmatize text for BM25 matching. adapter milvus BM25
 
     Returns space-joined lemmas for full-text search. Handles both split
     and un-split technical identifiers using underscores and hyphens (e.g., 'vcl_c', 'Chapter_1', 'rag-data').
     """
-    nlp_lemma = get_nlp_lemma()
+    nlp_lemma = load_nlp_lemma(model_name)
     if nlp_lemma is None:
         return text
 

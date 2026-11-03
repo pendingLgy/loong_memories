@@ -30,7 +30,7 @@ _PIPELINES_LEMMA: Dict[str, Any] = {}
 _lock = threading.Lock()
 
 
-def load_nlp(model_name: str = DEFAULT_MODEL) -> Optional[Any]:
+def load_nlp_faull(model_name: str = DEFAULT_MODEL) -> Optional[Any]:
     """加载 spaCy 句柄：补 sentencizer 以支持句级切分；未装 spaCy 或模型缺失时返回 None。"""
     cached = _PIPELINES.get(model_name)
     if cached is _FAILED:
@@ -49,25 +49,31 @@ def load_nlp(model_name: str = DEFAULT_MODEL) -> Optional[Any]:
 
         try:
             import spacy
-        except ImportError:
+        except ImportError as exc:
             _PIPELINES[model_name] = _FAILED
             logger.warning("spaCy 未安装，分句与实体抽取将使用回退实现 model=%s", model_name)
-            return None
+            return exc
+
+        _ensure_model_available(model_name)
 
         try:
             nlp = spacy.load(model_name)
         except Exception as exc:  # noqa: BLE001 模型缺失或加载失败均降级
             _PIPELINES[model_name] = _FAILED
             logger.warning("spaCy 模型加载失败，将使用回退实现 model=%s error=%s", model_name, exc)
-            return None
+            return exc
 
         ensure_sentence_boundaries(nlp)
         _PIPELINES[model_name] = nlp
         logger.info("spaCy 模型加载完成 model=%s pipes=%s", model_name, list(nlp.pipe_names))
     return nlp
 
-def get_nlp_lemma(model_name: str = DEFAULT_MODEL) -> Optional[Any]:
+def load_nlp_lemma(model_name: Optional[str] = DEFAULT_MODEL) -> Optional[Any]:
     """Return spaCy model with only lemmatizer for BM25 text processing."""
+    if model_name is None:
+        logger.warning("spacy nlp model name is none")
+        return None
+
     cached = _PIPELINES_LEMMA.get(model_name)
     if cached is _FAILED:
         return None
@@ -85,27 +91,52 @@ def get_nlp_lemma(model_name: str = DEFAULT_MODEL) -> Optional[Any]:
 
         try:
             import spacy
-        except ImportError:
+        except ImportError as exc:
             _PIPELINES_LEMMA[model_name] = _FAILED
-            logger.warning("spaCy lemma 未安装，分句与实体抽取将使用回退实现 model=%s", model_name)
-            return None
+            logger.error("spaCy lemma 未安装，分句与实体抽取将使用回退实现 model=%s", model_name)
+            raise exc
+
+        _ensure_model_available(model_name)
 
         try:
             nlp_lemma = spacy.load(model_name, disable=["ner", "parser"])
         except Exception as exc:  # noqa: BLE001 模型缺失或加载失败均降级
             _PIPELINES_LEMMA[model_name] = _FAILED
-            logger.warning("spaCy lemma 模型加载失败，将使用回退实现 model=%s error=%s", model_name, exc)
-            return None
+            logger.error("spaCy lemma 模型加载失败，将使用回退实现 model=%s error=%s", model_name, exc)
+            raise exc
 
         _PIPELINES_LEMMA[model_name] = nlp_lemma
         logger.info("spaCy lemma 模型加载完成 model=%s pipes=%s", model_name, list(nlp_lemma.pipe_names))
     return nlp_lemma
+
+def _ensure_model_available(model_name: str) -> None:
+    """Download en_core_web_sm if spaCy is installed but model is missing."""
+    try:
+        import spacy
+    except ImportError:
+        raise ImportError(
+            "spaCy is not installed"
+        )
+
+    if not spacy.util.is_package(model_name):
+        logger.info(f"Downloading spaCy model {model_name}...")
+        try:
+            from spacy.cli import download
+
+            download(model_name)
+            logger.info(f"spaCy model {model_name} downloaded successfully")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to download spaCy model {model_name}: {e}. "
+                "Please install manually: python -m spacy download {model_name}"
+            ) from e
 
 
 def clear_cache() -> None:
     """清空句柄缓存（含失败记录），供测试或运行时重建句柄使用。"""
     with _lock:  # 【建议】清空缓存时也加上锁，确保多线程安全
         _PIPELINES.clear()
+        _PIPELINES_LEMMA.clear()
 
 
 def ensure_sentence_boundaries(nlp: Any) -> None:

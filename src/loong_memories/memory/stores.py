@@ -26,9 +26,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from loong_memories.core.config_nlp import NlpSettings
 from loong_memories.core.exceptions import StorageError
 from loong_memories.memory.models import MemoryItem
 from loong_memories.nlp.lemmatization import lemmatize_zh_for_bm25
+from loong_memories.nlp.spacy import load_nlp_lemma
 from loong_memories.storage.memories.base import VectorStoreResult
 from loong_memories.storage.memories.vector_engine import VectorEngine, AsyncVectorEngine
 from loong_memories.storage.message.db_engine import AsyncDBEngine, DBEngine
@@ -67,22 +69,6 @@ def to_vector_id_int(vector_id: Any) -> Optional[int]:
     except (TypeError, ValueError):
         return None
 
-def build_payload(text: str, new_metadata: Dict[str, Any], created_at: Optional[str] = None) -> Dict[str, Any]:
-    """组装写入 payload：核心键由本函数负责，作用域由 scope 提供。"""
-    stamp = created_at or now_iso()
-
-    query_lemmatized = lemmatize_zh_for_bm25(keyword_text(text))
-
-    payload: Dict[str, Any] = {
-        "text": text,
-        "text_lemma": query_lemmatized,
-        "hash": memory_hash(text),
-        "created_at_tz": stamp,
-        "updated_at_tz": None,
-    }
-    payload.update({key: value for key, value in new_metadata.items() if value})
-    return payload
-
 
 def split_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """把 payload 拆成「核心字段 + 提升字段 + 其余 metadata」。"""
@@ -106,13 +92,20 @@ class MemoryStore:
             self,
             vector_engine: VectorEngine,
             db_engine: DBEngine,
+            nlp_setting: Optional[NlpSettings] = None
     ) -> None:
         self.vector_engine = vector_engine
         self.db_engine = db_engine
+        self.nlp_setting = nlp_setting
 
     def start(self):
         self.vector_engine.start()
         self.db_engine.start()
+        self._loading_nlp()
+
+    def _loading_nlp(self):
+        if self.nlp_setting and self.nlp_setting.enable:
+            load_nlp_lemma(self.nlp_setting.nlp_name)
 
     @property
     def supports_keyword(self) -> bool:
@@ -120,7 +113,28 @@ class MemoryStore:
         from loong_memories.storage.memories.base import VectorStoreBase
 
         store = self.vector_engine
+        if self.nlp_setting is None or self.nlp_setting.enable is False:
+            return False
+
         return type(store).keyword_search is not VectorStoreBase.keyword_search
+
+    def build_payload(self, text: str, new_metadata: Dict[str, Any], created_at: Optional[str] = None) -> Dict[str, Any]:
+        """组装写入 payload：核心键由本函数负责，作用域由 scope 提供。"""
+        stamp = created_at or now_iso()
+
+        query_lemmatized = None
+        if self.nlp_setting is not None and self.nlp_setting.enable:
+            query_lemmatized = lemmatize_zh_for_bm25(keyword_text(text), self.nlp_setting.nlp_name)
+
+        payload: Dict[str, Any] = {
+            "text": text,
+            "text_lemma": query_lemmatized,
+            "hash": memory_hash(text),
+            "created_at_tz": stamp,
+            "updated_at_tz": None,
+        }
+        payload.update({key: value for key, value in new_metadata.items() if value})
+        return payload
 
     def _warn(self, message: str, **fields: Any) -> None:
         detail = " ".join(f"{key}={value}" for key, value in fields.items())
@@ -331,7 +345,7 @@ class MemoryStore:
         bm25_scores = {}
         if self.supports_keyword:
             keyword_query = keyword_text(query)
-            query_lemmatized = lemmatize_zh_for_bm25(keyword_query)
+            query_lemmatized = lemmatize_zh_for_bm25(keyword_query,self.nlp_setting.nlp_name)
 
             try:
                 keyword_results = self.vector_engine.keyword_search(query=query_lemmatized, tenant_id=tenant_id, user_id=user_id, top_k=internal_limit, filter=filter) or []
@@ -379,14 +393,16 @@ class MemoryStore:
 class AsyncMemoryStore(MemoryStore):
     """向量库与关系库的组合封装：统一批量写入、历史审计与失败降级。"""
 
-    def __init__(self, vector_engine: AsyncVectorEngine, db_engine: AsyncDBEngine) -> None:
-        super().__init__(vector_engine, db_engine)
+    def __init__(self, vector_engine: AsyncVectorEngine, db_engine: AsyncDBEngine,
+                 nlp_setting: Optional[NlpSettings] = None) -> None:
+        super().__init__(vector_engine, db_engine, nlp_setting)
         self.vector_engine = vector_engine
         self.db_engine = db_engine
 
     async def start(self):
         await self.vector_engine.start()
         await self.db_engine.start()
+        self._loading_nlp()
 
     async def insert_memories(
             self,
@@ -548,7 +564,7 @@ class AsyncMemoryStore(MemoryStore):
         bm25_scores = {}
         if self.supports_keyword:
             keyword_query = keyword_text(query)
-            query_lemmatized = lemmatize_zh_for_bm25(keyword_query)
+            query_lemmatized = lemmatize_zh_for_bm25(keyword_query,self.nlp_setting.nlp_name)
 
             try:
                 keyword_results = await self.vector_engine.keyword_search(query=query_lemmatized, tenant_id=tenant_id, user_id=user_id, top_k=internal_limit, filter=filter) or []
